@@ -53,7 +53,7 @@ export default function Register() {
     }
 
     if (data.user) {
-      navigate('/dashboard')
+      navigate('/onboarding')
     }
   }
 

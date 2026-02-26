@@ -12,8 +12,7 @@ export default function Navbar() {
 
   const navLinks = [
     { name: 'Home', path: '/' },
-    { name: 'Servicii', path: '/services' },
-    { name: 'Rezervări', path: '/bookings' },
+    
     { name: 'Despre noi', path: '/about' },
     { name: 'Contact', path: '/contact' },
   ]
