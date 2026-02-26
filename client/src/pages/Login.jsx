@@ -1,7 +1,11 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { supabase } from '../supabase'
 
 export default function Login() {
+  const navigate = useNavigate()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -9,12 +13,29 @@ export default function Login() {
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
+    setError('')
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    console.log('Login data:', formData)
-    // Aici vom conecta la backend mai tarziu
+    setLoading(true)
+    setError('')
+
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      email: formData.email,
+      password: formData.password
+    })
+
+    setLoading(false)
+
+    if (signInError) {
+      setError('Email sau parolă incorectă')
+      return
+    }
+
+    if (data.user) {
+      navigate('/dashboard')
+    }
   }
 
   return (
@@ -25,26 +46,28 @@ export default function Login() {
           <p className="text-gray-500 mt-2">Conectează-te la contul tău</p>
         </div>
 
+        {error && (
+          <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-4 text-sm">
+            {error}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Email sau Telefon
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
             <input
-              type="text"
+              type="email"
               name="email"
               value={formData.email}
               onChange={handleChange}
-              placeholder="email@exemplu.com sau 07xxxxxxxx"
+              placeholder="email@exemplu.com"
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Parolă
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Parolă</label>
             <input
               type="password"
               name="password"
@@ -58,9 +81,10 @@ export default function Login() {
 
           <button
             type="submit"
-            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition cursor-pointer"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Intră în cont
+            {loading ? 'Se conectează...' : 'Intră în cont'}
           </button>
         </form>
 

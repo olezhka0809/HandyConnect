@@ -1,7 +1,11 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { supabase } from '../supabase'
 
 export default function Register() {
+  const navigate = useNavigate()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -14,16 +18,43 @@ export default function Register() {
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
+    setError('')
   }
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
+    
     if (formData.password !== formData.confirmPassword) {
-      alert('Parolele nu coincid!')
+      setError('Parolele nu coincid!')
       return
     }
-    console.log('Register data:', formData)
-    // Aici vom conecta la backend mai tarziu
+
+    setLoading(true)
+    setError('')
+
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: formData.email,
+      password: formData.password,
+      options: {
+        data: {
+          first_name: formData.firstName,
+          last_name: formData.lastName,
+          phone: formData.phone,
+          role: formData.role
+        }
+      }
+    })
+
+    setLoading(false)
+
+    if (signUpError) {
+      setError(signUpError.message)
+      return
+    }
+
+    if (data.user) {
+      navigate('/dashboard')
+    }
   }
 
   return (
@@ -33,6 +64,12 @@ export default function Register() {
           <h1 className="text-3xl font-bold text-gray-800">🔧 HandyConnect</h1>
           <p className="text-gray-500 mt-2">Creează un cont nou</p>
         </div>
+
+        {error && (
+          <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-4 text-sm">
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex gap-3">
@@ -107,10 +144,10 @@ export default function Register() {
               name="password"
               value={formData.password}
               onChange={handleChange}
-              placeholder="Minim 8 caractere"
+              placeholder="Minim 6 caractere"
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               required
-              minLength={8}
+              minLength={6}
             />
           </div>
 
@@ -124,15 +161,16 @@ export default function Register() {
               placeholder="••••••••"
               className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               required
-              minLength={8}
+              minLength={6}
             />
           </div>
 
           <button
             type="submit"
-            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition cursor-pointer"
+            disabled={loading}
+            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Creează cont
+            {loading ? 'Se creează contul...' : 'Creează cont'}
           </button>
         </form>
 
