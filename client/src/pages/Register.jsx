@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../supabase'
+import logo from '../assets/Logo_pin.png'
 
 export default function Register() {
   const navigate = useNavigate()
@@ -61,7 +62,8 @@ export default function Register() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-8">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-800">🔧 HandyConnect</h1>
+          <img src={logo} alt="HandyConnect" className="w-16 h-16 mx-auto mb-4" />
+          <h1 className="text-3xl font-bold text-gray-800">HandyConnect</h1>
           <p className="text-gray-500 mt-2">Creează un cont nou</p>
         </div>
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabase'
+import logo from '../assets/Logo_pin.png'
 import { 
   ChevronLeft, ChevronRight, Upload, CheckCircle,
   Building2, Home, Hotel, Store,
@@ -175,8 +176,9 @@ export default function Onboarding() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 py-10">
       <div className="w-full max-w-xl">
         {/* Logo */}
-        <div className="text-center mb-6">
-          <h2 className="text-xl font-bold text-blue-600">🔧 HandyConnect</h2>
+        <div className="flex items-center justify-center gap-4 mb-8">
+          <img src={logo} alt="HandyConnect" className="w-20 h-20" />
+          <span className="text-4xl font-bold text-blue-600">HandyConnect</span>
         </div>
 
         {/* Titlu per step */}
