@@ -34,7 +34,16 @@ export default function Login() {
       return
     }
 
-    if (data.user) {
+    const { data: roles } = await supabase
+      .from('user_roles')
+      .select('roles(name)')
+      .eq('user_id', data.user.id)
+
+    const userRole = roles?.[0]?.roles?.name
+
+    if (userRole === 'handyman') {
+      navigate('/handyman/dashboard')
+    } else {
       navigate('/dashboard')
     }
   }
