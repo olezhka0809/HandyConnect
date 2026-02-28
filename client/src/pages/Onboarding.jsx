@@ -55,9 +55,7 @@ export default function Onboarding() {
       setUser(user)
       setFormData(prev => ({
         ...prev,
-        firstName: user.user_metadata?.first_name || '',
-        lastName: user.user_metadata?.last_name || '',
-        phone: user.user_metadata?.phone || '',
+        
       }))
 
       const { data: cats } = await supabase.from('categories').select('*').eq('is_active', true)
