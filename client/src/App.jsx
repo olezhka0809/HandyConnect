@@ -8,6 +8,10 @@ import AboutUs from './pages/AboutUs'
 import Contact from './pages/Contact'
 import Onboarding from './pages/Onboarding'
 import FindServices from './pages/FindServices'
+import HandymanProfile from './pages/HandymanProfile'
+import BookService from './pages/BookService'
+import Issues from './pages/Issues'
+import PostTask from './pages/PostTask'
 
 function App() {
   return (
@@ -26,6 +30,10 @@ function App() {
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/dashboard" element={<ClientDashboard />} />
         <Route path="/find-services" element={<FindServices />} />
+        <Route path="/handyman/:slug" element={<HandymanProfile />} />
+        <Route path="/book/:slug" element={<BookService />} />
+        <Route path="/issues" element={<Issues />} />
+        <Route path="/post-task" element={<PostTask />} />
       </Routes>
     </BrowserRouter>
   )

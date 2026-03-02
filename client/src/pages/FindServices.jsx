@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import DashboardNavbar from '../components/dashboard/DashboardNavbar'
+import SearchResults from '../components/dashboard/SearchResults'
+import { Link } from 'react-router-dom'
 import { 
   Search, SlidersHorizontal, LayoutGrid, List, X,
   TrendingUp, Star, MapPin, CheckCircle, Clock,
   MessageSquare, Phone, Award
 } from 'lucide-react'
+
 
 
 const popularServices = [
@@ -76,7 +79,7 @@ export default function FindServices() {
   const [sortBy, setSortBy] = useState('top_rated')
   const [categories, setCategories] = useState([])
   const [selectedCategory, setSelectedCategory] = useState('all')
-
+  const [showSearchResults, setShowSearchResults] = useState(false)
   const [filters, setFilters] = useState({
     minPrice: 0,
     maxPrice: 200,
@@ -152,6 +155,11 @@ export default function FindServices() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && searchQuery.trim()) {
+                  setShowSearchResults(true)
+                }
+              }}
               placeholder="Caută servicii, handymani sau cuvinte cheie..."
               className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
             />
@@ -368,12 +376,14 @@ export default function FindServices() {
               <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-all p-5">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold">
+                    <Link to={`/handyman/${h.name.toLowerCase().replace(' ', '-')}`} className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold hover:ring-2 hover:ring-blue-400 transition cursor-pointer">
                       {h.name.split(' ').map(n => n[0]).join('')}
-                    </div>
+                    </Link>
                     <div>
                       <div className="flex items-center gap-2">
-                        <p className="font-bold text-gray-800">{h.name}</p>
+                        <Link to={`/handyman/${h.name.toLowerCase().replace(' ', '-')}`} className="font-bold text-gray-800 hover:text-blue-600 transition">
+                          {h.name}
+                        </Link>
                         {h.verified && <CheckCircle className="w-4 h-4 text-blue-600" />}
                       </div>
                       <div className="flex items-center gap-1 mt-0.5">
@@ -521,6 +531,13 @@ export default function FindServices() {
         </div>
 
       </div>
+      {/* Search Results Modal */}
+        {showSearchResults && (
+          <SearchResults
+            query={searchQuery}
+            onClose={() => setShowSearchResults(false)}
+          />
+        )}
     </div>
   )
 }
