@@ -5,8 +5,9 @@ import logo from '../assets/Logo_pin.png'
 import {
   ChevronLeft, ChevronRight, Camera, CheckCircle, X,
   Clock, MapPin, AlertTriangle, Zap, Phone, Mail,
-  Tag, Image, Info
+  Tag, Image, Info, Users, Heart, Search, Star 
 } from 'lucide-react'
+import TaskPhoto from '../components/TaskPhoto'
 
 const categoryOptions = [
   'Instalații Sanitare',
@@ -35,6 +36,9 @@ export default function PostTask() {
   const [showSuccess, setShowSuccess] = useState(false)
   const [keywordInput, setKeywordInput] = useState('')
   const [photoPreviews, setPhotoPreviews] = useState([])
+  const [favorites, setFavorites] = useState([])
+  const [searchResults, setSearchResults] = useState([])
+  const [handymanSearch, setHandymanSearch] = useState('')
 
   const [form, setForm] = useState({
     category: '',
@@ -52,6 +56,9 @@ export default function PostTask() {
     contactMethod: 'phone',
     specialInstructions: '',
     insuranceRequired: false,
+    notifyFavorites: false,
+    notifySpecific: false,
+    proposedHandymen: [],
   })
 
   useEffect(() => {
@@ -70,6 +77,18 @@ export default function PostTask() {
           address: data.address || '',
         }))
       }
+      // Încarcă favoriții
+    const { data: favData } = await supabase
+        .from('favorite_handymen')
+        .select(`
+          handyman_id,
+          handyman:handyman_id (
+            id, first_name, last_name, avatar_url, city,
+            handyman_profiles!inner (rating_avg, specialties, is_available)
+          )
+        `)
+        .eq('client_id', user.id)
+      setFavorites(favData || [])
     }
     loadUser()
   }, [navigate])
@@ -113,26 +132,96 @@ export default function PostTask() {
 
   const handleSubmit = async () => {
     setLoading(true)
-    // TODO: Salvare în Supabase tasks table
-    console.log('Task posted:', form)
-    setTimeout(() => {
+    try {
+      const categoryName = form.category === 'Altele' 
+        ? (form.customCategory || 'Altele') 
+        : form.category
+
+      const { data: categoryData } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('name', categoryName)
+        .single()
+
+      const { data: taskData, error: taskError } = await supabase
+        .from('tasks')
+        .insert({
+          client_id: user.id,
+          title: form.title,
+          description: form.description,
+          category_id: categoryData?.id || null,
+          keywords: form.keywords,
+          photos: [],
+          status: 'pending',
+          urgency: form.urgency,
+          service_address: form.address,
+          access_instructions: form.accessInstructions || null,
+          contact_name: form.contactName,
+          contact_email: form.contactEmail,
+          contact_phone: form.contactPhone,
+          contact_method: form.contactMethod,
+          special_instructions: form.specialInstructions || null,
+          insurance_required: form.insuranceRequired,
+          is_public: true,
+          proposed_to: form.proposedHandymen,
+        })
+        .select()
+        .single()
+
+      if (taskError) {
+        console.error('Eroare:', taskError)
+        alert('Eroare: ' + taskError.message)
+        setLoading(false)
+        return
+      }
+
+      console.log('Task creat:', taskData)
       setLoading(false)
       setShowSuccess(true)
-    }, 1500)
+
+    } catch (err) {
+      console.error('Eroare:', err)
+      alert('A apărut o eroare.')
+      setLoading(false)
+    }
   }
 
-  const totalSteps = 3
+  const searchHandyman = async (query) => {
+  setHandymanSearch(query)
+  if (query.length < 2) { setSearchResults([]); return }
+
+  const { data } = await supabase
+    .from('handyman_full_profile')
+    .select('*')
+    .or(`first_name.ilike.%${query}%,last_name.ilike.%${query}%`)
+    .limit(5)
+
+  setSearchResults(data || [])
+}
+
+const toggleHandyman = (id) => {
+  setForm(prev => ({
+    ...prev,
+    proposedHandymen: prev.proposedHandymen.includes(id)
+      ? prev.proposedHandymen.filter(h => h !== id)
+      : [...prev.proposedHandymen, id]
+  }))
+}
+
+  const totalSteps = 4
   const progress = (step / totalSteps) * 100
 
   const titles = {
     1: { title: 'Descrie Taskul', subtitle: 'Spune-ne ce lucrare ai nevoie să fie făcută' },
     2: { title: 'Locație & Urgență', subtitle: 'Unde și cât de urgent trebuie rezolvat?' },
     3: { title: 'Informații de Contact', subtitle: 'Cum te pot contacta handymanii interesați?' },
+    4: { title: 'Trimite Taskul', subtitle: 'Alege cui vrei să trimiți cererea ta' },
   }
 
   const canProceedStep1 = form.category && form.title && form.description
   const canProceedStep2 = form.address
   const canProceedStep3 = form.contactName && form.contactEmail && form.contactPhone
+  const canProceedStep4 = form.sendOption === 'all' || form.proposedHandymen.length > 0
 
   if (!user) return null
 
@@ -499,6 +588,193 @@ export default function PostTask() {
               </div>
             </div>
           )}
+
+          {/* STEP 4: Send Options */}
+          {step === 4 && (
+          <div className="space-y-6">
+            <div>
+              <h3 className="font-bold text-gray-800 mb-2">Cum vrei să trimiți taskul?</h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Taskul va fi vizibil pentru toți handymanii. Opțional, poți notifica și handymani specifici.
+              </p>
+
+              {/* Opțiunea de notificare */}
+              <div className="space-y-2 mb-6">
+                <button
+                  onClick={() => update('notifyFavorites', !form.notifyFavorites)}
+                  className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-all
+                    ${form.notifyFavorites ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}
+                  `}
+                >
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center
+                    ${form.notifyFavorites ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}
+                  `}>
+                    {form.notifyFavorites && <CheckCircle className="w-3 h-3 text-white" />}
+                  </div>
+                  <Heart className={`w-5 h-5 ${form.notifyFavorites ? 'text-blue-600' : 'text-gray-400'}`} />
+                  <div>
+                    <p className={`font-medium ${form.notifyFavorites ? 'text-blue-600' : 'text-gray-800'}`}>
+                      Notifică handymanii mei favoriți
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {favorites.length > 0
+                        ? `${favorites.length} handymani favoriți vor primi o notificare prioritară`
+                        : 'Nu ai handymani favoriți încă'
+                      }
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => update('notifySpecific', !form.notifySpecific)}
+                  className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-all
+                    ${form.notifySpecific ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}
+                  `}
+                >
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center
+                    ${form.notifySpecific ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}
+                  `}>
+                    {form.notifySpecific && <CheckCircle className="w-3 h-3 text-white" />}
+                  </div>
+                  <Search className={`w-5 h-5 ${form.notifySpecific ? 'text-blue-600' : 'text-gray-400'}`} />
+                  <div>
+                    <p className={`font-medium ${form.notifySpecific ? 'text-blue-600' : 'text-gray-800'}`}>
+                      Caută și adaugă handymani specifici
+                    </p>
+                    <p className="text-xs text-gray-500">Caută după nume și adaugă-i la notificări</p>
+                  </div>
+                </button>
+              </div>
+
+              {/* Favoriți - selectare */}
+              {form.notifyFavorites && favorites.length > 0 && (
+                <div className="mb-4">
+                  <h4 className="text-sm font-bold text-gray-800 mb-2">
+                    Selectează din favoriți ({form.proposedHandymen.length} selectați)
+                  </h4>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {favorites.map((fav) => {
+                      const h = fav.handyman
+                      const hp = h?.handyman_profiles?.[0]
+                      const isSelected = form.proposedHandymen.includes(fav.handyman_id)
+                      return (
+                        <button
+                          key={fav.handyman_id}
+                          onClick={() => toggleHandyman(fav.handyman_id)}
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-all
+                            ${isSelected ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}
+                          `}
+                        >
+                          <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0
+                            ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}
+                          `}>
+                            {isSelected && <CheckCircle className="w-3 h-3 text-white" />}
+                          </div>
+                          {h?.avatar_url ? (
+                            <img src={h.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-sm">
+                              {h?.first_name?.[0]}{h?.last_name?.[0]}
+                            </div>
+                          )}
+                          <div className="flex-1">
+                            <p className="font-medium text-gray-800">{h?.first_name} {h?.last_name}</p>
+                            <div className="flex items-center gap-2 text-xs text-gray-500">
+                              {h?.city && <span>{h.city}</span>}
+                              {hp?.rating_avg > 0 && (
+                                <span className="flex items-center gap-0.5">
+                                  <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" /> {hp.rating_avg}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Căutare handyman */}
+              {form.notifySpecific && (
+                <div className="mb-4">
+                  <h4 className="text-sm font-bold text-gray-800 mb-2">Caută handyman</h4>
+                  <div className="relative mb-3">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      type="text"
+                      value={handymanSearch}
+                      onChange={(e) => searchHandyman(e.target.value)}
+                      placeholder="Caută după nume..."
+                      className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  {searchResults.length > 0 && (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {searchResults.map((h) => {
+                        const isSelected = form.proposedHandymen.includes(h.id)
+                        return (
+                          <button
+                            key={h.id}
+                            onClick={() => toggleHandyman(h.id)}
+                            className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 text-left transition-all
+                              ${isSelected ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}
+                            `}
+                          >
+                            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0
+                              ${isSelected ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}
+                            `}>
+                              {isSelected && <CheckCircle className="w-3 h-3 text-white" />}
+                            </div>
+                            {h.avatar_url ? (
+                              <img src={h.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover" />
+                            ) : (
+                              <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-sm">
+                                {h.first_name?.[0]}{h.last_name?.[0]}
+                              </div>
+                            )}
+                            <div className="flex-1">
+                              <p className="font-medium text-gray-800">{h.first_name} {h.last_name}</p>
+                              <div className="flex items-center gap-2 text-xs text-gray-500">
+                                {h.primary_city && <span>{h.primary_city}</span>}
+                                {h.rating_avg > 0 && (
+                                  <span className="flex items-center gap-0.5">
+                                    <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" /> {h.rating_avg}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {handymanSearch.length >= 2 && searchResults.length === 0 && (
+                    <p className="text-sm text-gray-500 text-center py-4">Niciun handyman găsit</p>
+                  )}
+                </div>
+              )}
+
+              {/* Info box */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <div className="flex items-start gap-2">
+                  <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm text-blue-700">
+                    <p className="font-medium mb-1">Cum funcționează:</p>
+                    <ul className="space-y-1 text-xs">
+                      <li>• Taskul va fi publicat și vizibil pentru toți handymanii</li>
+                      <li>• Handymanii interesați îți vor trimite oferte cu preț și disponibilitate</li>
+                      {form.proposedHandymen.length > 0 && (
+                        <li>• {form.proposedHandymen.length} handyman{form.proposedHandymen.length > 1 ? 'i' : ''} vor primi notificare prioritară</li>
+                      )}
+                      <li>• Tu alegi oferta care ți se potrivește cel mai bine</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         </div>
 
         {/* Navigation Buttons */}
@@ -519,7 +795,7 @@ export default function PostTask() {
             </button>
           )}
 
-          {step < 3 ? (
+          {step < 4 ? (
             <button
               onClick={() => setStep(step + 1)}
               disabled={(step === 1 && !canProceedStep1) || (step === 2 && !canProceedStep2)}
