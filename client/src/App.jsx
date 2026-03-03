@@ -12,6 +12,12 @@ import HandymanProfile from './pages/HandymanProfile'
 import BookService from './pages/BookService'
 import Issues from './pages/Issues'
 import PostTask from './pages/PostTask'
+import HandymanDashboard from './pages/HandymanDashboard'
+import HandymanOnboarding from './pages/HandymanOnboarding'
+import HandymanJobs from './pages/HandymanJobs'
+import HandymanReviews from './pages/HandymanReviews'
+import HandymanServices from './pages/HandymanServices'
+
 
 function App() {
   return (
@@ -34,6 +40,11 @@ function App() {
         <Route path="/book/:slug" element={<BookService />} />
         <Route path="/issues" element={<Issues />} />
         <Route path="/post-task" element={<PostTask />} />
+        <Route path="/handyman/dashboard" element={<HandymanDashboard />} />
+        <Route path="/handyman-onboarding" element={<HandymanOnboarding />} />
+        <Route path="/handyman/jobs" element={<HandymanJobs />} />
+        <Route path="/handyman/reviews" element={<HandymanReviews />} />
+        <Route path="/handyman/services" element={<HandymanServices />} />
       </Routes>
     </BrowserRouter>
   )
