@@ -17,6 +17,7 @@ import HandymanOnboarding from './pages/HandymanOnboarding'
 import HandymanJobs from './pages/HandymanJobs'
 import HandymanReviews from './pages/HandymanReviews'
 import HandymanServices from './pages/HandymanServices'
+import ClientProfile from './pages/ClientProfile'
 
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/about" element={<AboutUs />} />
           <Route path="/contact" element={<Contact />} />
+          
         </Route>
 
         {/* Pagini FĂRĂ navbar + footer */}
@@ -45,6 +47,7 @@ function App() {
         <Route path="/handyman/jobs" element={<HandymanJobs />} />
         <Route path="/handyman/reviews" element={<HandymanReviews />} />
         <Route path="/handyman/services" element={<HandymanServices />} />
+        <Route path="/profile" element={<ClientProfile />} />
       </Routes>
     </BrowserRouter>
   )
