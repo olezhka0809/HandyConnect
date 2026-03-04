@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Home, Briefcase, Star, Settings, MessageSquare, Bell, Wrench } from 'lucide-react'
+import { Home, Briefcase, Star, Settings, MessageSquare, Bell, Wrench, Navigation } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { supabase } from '../../supabase'
 import logo from '../../assets/Logo_pin.png'
@@ -10,6 +10,7 @@ const navLinks = [
   { path: '/handyman/jobs', label: 'Job Pipeline', icon: Briefcase },
   { path: '/handyman/reviews', label: 'Recenzii', icon: Star },
   { path: '/handyman/services', label: 'Gestionare Servicii', icon: Wrench },
+  { path: '/handyman/feed', label: 'Feed Taskuri',icon: Navigation },
 ]
 
 export default function HandymanNavbar() {
@@ -61,9 +62,6 @@ export default function HandymanNavbar() {
           <div className="flex items-center gap-2">
             <button className="w-10 h-10 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition">
               <MessageSquare className="w-5 h-5" />
-            </button>
-            <button className="w-10 h-10 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition">
-              <Settings className="w-5 h-5" />
             </button>
             <button 
               onClick={() => setShowNotifications(true)}

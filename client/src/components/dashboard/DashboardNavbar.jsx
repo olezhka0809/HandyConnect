@@ -72,9 +72,6 @@ export default function DashboardNavbar() {
             <button className="w-10 h-10 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition">
               <MessageSquare className="w-5 h-5" />
             </button>
-            <button className="w-10 h-10 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition">
-              <Settings className="w-5 h-5" />
-            </button>
             <button
               onClick={() => setShowNotifications(true)} 
               className="relative w-10 h-10 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition">

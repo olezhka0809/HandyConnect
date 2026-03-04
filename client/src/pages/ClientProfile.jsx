@@ -6,7 +6,7 @@ import {
   User, Bell, Shield, Tag, CreditCard, Star, MapPin, Wrench,
   Receipt, Palette, LogOut, ChevronRight, Camera, Edit2, X,
   CheckCircle, Plus, Trash2, Eye, EyeOff, Sun, Moon, Monitor,
-  Mail, Phone, Lock, AlertTriangle, Clock, Heart
+  Mail, Phone, Lock, AlertTriangle, Clock, Heart,Calendar 
 } from 'lucide-react'
 
 const sidebarItems = [
@@ -17,7 +17,7 @@ const sidebarItems = [
   { id: 'cards', label: 'Cardurile Mele', icon: CreditCard },
   { id: 'reviews', label: 'Recenziile Mele', icon: Star },
   { id: 'addresses', label: 'Adresele Mele', icon: MapPin },
-  { id: 'repairs', label: 'Reparațiile Mele', icon: Wrench },
+  { id: 'repairs', label: 'Istoric Comenzi', icon: Wrench },
   { id: 'billing', label: 'Date Facturare', icon: Receipt },
   { id: 'appearance', label: 'Aspect Interfață', icon: Palette },
 ]
@@ -59,6 +59,9 @@ export default function ClientProfile() {
   const [theme, setTheme] = useState('system')
   const [showAddAddress, setShowAddAddress] = useState(false)
   const [newAddress, setNewAddress] = useState({ label: 'Acasă', street: '', city: '', county: '', postal_code: '' })
+  const [historyTab, setHistoryTab] = useState('tasks')
+  const [historyTasks, setHistoryTasks] = useState([])
+  const [historyBookings, setHistoryBookings] = useState([])
 
   // Notification settings
   const [notifSettings, setNotifSettings] = useState({
@@ -96,6 +99,30 @@ export default function ClientProfile() {
       .eq('user_id', user.id)
       .order('is_primary', { ascending: false })
     setAddresses(addressData || [])
+
+    // Istoric taskuri
+    const { data: tasksData } = await supabase
+    .from('tasks')
+    .select(`
+        *,
+        category:category_id (name),
+        handyman:handyman_id (first_name, last_name)
+    `)
+    .eq('client_id', user.id)
+    .order('created_at', { ascending: false })
+    setHistoryTasks(tasksData || [])
+
+    // Istoric rezervări
+    const { data: bookingsData } = await supabase
+    .from('bookings')
+    .select(`
+        *,
+        handyman:handyman_id (first_name, last_name),
+        service:service_id (title)
+    `)
+    .eq('client_id', user.id)
+    .order('created_at', { ascending: false })
+    setHistoryBookings(bookingsData || [])
 
     setLoading(false)
   }
@@ -717,38 +744,147 @@ export default function ClientProfile() {
 
             {/* REPARAȚII */}
             {activeSection === 'repairs' && (
-              <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
-                <div className="p-6 border-b border-gray-100">
-                  <h2 className="text-lg font-bold text-gray-800">Reparațiile Mele</h2>
-                  <p className="text-sm text-gray-500">Istoricul complet al lucrărilor</p>
-                </div>
-                <div className="divide-y divide-gray-50">
-                  {mockRepairs.map((repair) => (
-                    <div key={repair.id} className="p-5 flex items-center justify-between hover:bg-gray-50 transition">
-                      <div className="flex items-center gap-4">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center
-                          ${repair.status === 'completed' ? 'bg-green-100' : 'bg-purple-100'}
-                        `}>
-                          {repair.status === 'completed'
-                            ? <CheckCircle className="w-5 h-5 text-green-600" />
-                            : <Clock className="w-5 h-5 text-purple-600" />
-                          }
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-800">{repair.title}</p>
-                          <p className="text-sm text-gray-500">{repair.handyman} • {new Date(repair.date).toLocaleDateString('ro-RO')}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold text-gray-800">{repair.price}</p>
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(repair.status)}`}>
-                          {getStatusLabel(repair.status)}
-                        </span>
-                      </div>
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
+                    <div className="p-6 border-b border-gray-100">
+                    <h2 className="text-lg font-bold text-gray-800">Istoric Comenzi</h2>
+                    <p className="text-sm text-gray-500">Taskurile și rezervările tale</p>
                     </div>
-                  ))}
+
+                    {/* Toggler */}
+                    <div className="px-6 pt-4">
+                    <div className="flex bg-gray-100 rounded-xl p-1">
+                        <button
+                        onClick={() => setHistoryTab('tasks')}
+                        className={`flex-1 py-2 text-sm font-medium rounded-lg transition
+                            ${historyTab === 'tasks' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}
+                        `}
+                        >
+                        Taskuri ({historyTasks.length})
+                        </button>
+                        <button
+                        onClick={() => setHistoryTab('bookings')}
+                        className={`flex-1 py-2 text-sm font-medium rounded-lg transition
+                            ${historyTab === 'bookings' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}
+                        `}
+                        >
+                        Rezervări ({historyBookings.length})
+                        </button>
+                    </div>
+                    </div>
+
+                    {/* Tasks List */}
+                    {historyTab === 'tasks' && (
+                    <div className="divide-y divide-gray-50">
+                        {historyTasks.length > 0 ? historyTasks.map((task) => (
+                        <div key={task.id} className="p-5 flex items-center justify-between hover:bg-gray-50 transition">
+                            <div className="flex items-center gap-4">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center
+                                ${task.status === 'completed' ? 'bg-green-100' :
+                                task.status === 'in_progress' ? 'bg-purple-100' :
+                                task.status === 'confirmed' ? 'bg-blue-100' : 'bg-yellow-100'}
+                            `}>
+                                {task.status === 'completed'
+                                ? <CheckCircle className="w-5 h-5 text-green-600" />
+                                : task.status === 'in_progress'
+                                ? <Clock className="w-5 h-5 text-purple-600" />
+                                : task.status === 'confirmed'
+                                ? <CheckCircle className="w-5 h-5 text-blue-600" />
+                                : <Clock className="w-5 h-5 text-yellow-600" />
+                                }
+                            </div>
+                            <div>
+                                <p className="font-medium text-gray-800">{task.title}</p>
+                                <div className="flex items-center gap-2 text-sm text-gray-500">
+                                <span>{task.category?.name || 'Necategorizat'}</span>
+                                <span>•</span>
+                                <span>{new Date(task.created_at).toLocaleDateString('ro-RO')}</span>
+                                </div>
+                                {task.handyman && (
+                                <p className="text-xs text-blue-600 mt-0.5">
+                                    Handyman: {task.handyman.first_name} {task.handyman.last_name}
+                                </p>
+                                )}
+                            </div>
+                            </div>
+                            <div className="text-right">
+                            {task.final_price && <p className="font-bold text-gray-800">{Number(task.final_price).toLocaleString('ro-RO')} RON</p>}
+                            {task.budget && !task.final_price && <p className="text-sm text-gray-500">Buget: {Number(task.budget).toLocaleString('ro-RO')} RON</p>}
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(task.status)}`}>
+                                {getStatusLabel(task.status)}
+                            </span>
+                            {task.urgency !== 'normal' && (
+                                <span className={`ml-1 px-1.5 py-0.5 rounded text-xs font-medium
+                                ${task.urgency === 'emergency' ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'}
+                                `}>
+                                {task.urgency === 'emergency' ? 'Urgență' : 'Urgent'}
+                                </span>
+                            )}
+                            </div>
+                        </div>
+                        )) : (
+                        <div className="p-8 text-center">
+                            <Wrench className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                            <p className="text-gray-500">Niciun task postat încă</p>
+                        </div>
+                        )}
+                    </div>
+                    )}
+
+                    {/* Bookings List */}
+                    {historyTab === 'bookings' && (
+                    <div className="divide-y divide-gray-50">
+                        {historyBookings.length > 0 ? historyBookings.map((booking) => (
+                        <div key={booking.id} className="p-5 flex items-center justify-between hover:bg-gray-50 transition">
+                            <div className="flex items-center gap-4">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center
+                                ${booking.status === 'completed' ? 'bg-green-100' :
+                                booking.status === 'in_progress' ? 'bg-purple-100' :
+                                booking.status === 'confirmed' ? 'bg-blue-100' : 'bg-yellow-100'}
+                            `}>
+                                {booking.status === 'completed'
+                                ? <CheckCircle className="w-5 h-5 text-green-600" />
+                                : booking.status === 'in_progress'
+                                ? <Clock className="w-5 h-5 text-purple-600" />
+                                : booking.status === 'confirmed'
+                                ? <CheckCircle className="w-5 h-5 text-blue-600" />
+                                : <Clock className="w-5 h-5 text-yellow-600" />
+                                }
+                            </div>
+                            <div>
+                                <p className="font-medium text-gray-800">{booking.service?.title || 'Rezervare'}</p>
+                                <div className="flex items-center gap-2 text-sm text-gray-500">
+                                {booking.handyman && (
+                                    <span>{booking.handyman.first_name} {booking.handyman.last_name}</span>
+                                )}
+                                <span>•</span>
+                                <span>{new Date(booking.created_at).toLocaleDateString('ro-RO')}</span>
+                                </div>
+                                {booking.scheduled_date && (
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                    Programat: {new Date(booking.scheduled_date).toLocaleDateString('ro-RO')} {booking.scheduled_time || ''}
+                                </p>
+                                )}
+                            </div>
+                            </div>
+                            <div className="text-right">
+                            {booking.total && <p className="font-bold text-gray-800">{Number(booking.total).toLocaleString('ro-RO')} RON</p>}
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(booking.status)}`}>
+                                {getStatusLabel(booking.status)}
+                            </span>
+                            {booking.payment_status === 'paid' && (
+                                <span className="ml-1 px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">Plătit</span>
+                            )}
+                            </div>
+                        </div>
+                        )) : (
+                        <div className="p-8 text-center">
+                            <Calendar className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                            <p className="text-gray-500">Nicio rezervare încă</p>
+                        </div>
+                        )}
+                    </div>
+                    )}
                 </div>
-              </div>
             )}
 
             {/* DATE FACTURARE */}
