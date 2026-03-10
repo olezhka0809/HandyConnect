@@ -19,7 +19,7 @@ import HandymanReviews from './pages/HandymanReviews'
 import HandymanServices from './pages/HandymanServices'
 import ClientProfile from './pages/ClientProfile'
 import HandymanFeed from './pages/HandymanFeed'
-
+import HandymanPersonalProfile from './pages/HandymanPersonalProfile'
 
 function App() {
   return (
@@ -50,6 +50,8 @@ function App() {
         <Route path="/handyman/services" element={<HandymanServices />} />
         <Route path="/profile" element={<ClientProfile />} />
         <Route path="/handyman/feed" element={<HandymanFeed />} />
+        <Route path="/handyman/personal-profile" element={<HandymanPersonalProfile />} />
+        
       </Routes>
     </BrowserRouter>
   )
