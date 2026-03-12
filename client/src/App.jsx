@@ -20,6 +20,8 @@ import HandymanServices from './pages/HandymanServices'
 import ClientProfile from './pages/ClientProfile'
 import HandymanFeed from './pages/HandymanFeed'
 import HandymanPersonalProfile from './pages/HandymanPersonalProfile'
+import HandymanMyProfile from './pages/HandymanMyProfile'
+import ProtectedRoute from './components/ProtectedRoute'
 
 function App() {
   return (
@@ -36,21 +38,23 @@ function App() {
         </Route>
 
         {/* Pagini FĂRĂ navbar + footer */}
-        <Route path="/onboarding" element={<Onboarding />} />
-        <Route path="/dashboard" element={<ClientDashboard />} />
-        <Route path="/find-services" element={<FindServices />} />
-        <Route path="/handyman/:slug" element={<HandymanProfile />} />
-        <Route path="/book/:slug" element={<BookService />} />
-        <Route path="/issues" element={<Issues />} />
-        <Route path="/post-task" element={<PostTask />} />
-        <Route path="/handyman/dashboard" element={<HandymanDashboard />} />
-        <Route path="/handyman-onboarding" element={<HandymanOnboarding />} />
-        <Route path="/handyman/jobs" element={<HandymanJobs />} />
-        <Route path="/handyman/reviews" element={<HandymanReviews />} />
-        <Route path="/handyman/services" element={<HandymanServices />} />
-        <Route path="/profile" element={<ClientProfile />} />
-        <Route path="/handyman/feed" element={<HandymanFeed />} />
-        <Route path="/handyman/personal-profile" element={<HandymanPersonalProfile />} />
+        <Route path="/onboarding" element={<ProtectedRoute allowedRoles={['client']} requireOnboarding={false}><Onboarding /></ProtectedRoute>} />
+        <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['client']}><ClientDashboard /></ProtectedRoute>} />
+        <Route path="/find-services" element={<ProtectedRoute allowedRoles={['client']}><FindServices /></ProtectedRoute>} />
+        <Route path="/handymen/:slug" element={<ProtectedRoute allowedRoles={['client']}><HandymanProfile /></ProtectedRoute>} />
+        <Route path="/book/:slug" element={<ProtectedRoute allowedRoles={['client']}><BookService /></ProtectedRoute>} />
+        <Route path="/issues" element={<ProtectedRoute allowedRoles={['client']}><Issues /></ProtectedRoute>} />
+        <Route path="/post-task" element={<ProtectedRoute allowedRoles={['client']}><PostTask /></ProtectedRoute>} />
+        <Route path="/profile" element={<ProtectedRoute allowedRoles={['client']}><ClientProfile /></ProtectedRoute>} />
+
+        <Route path="/handyman-onboarding" element={<ProtectedRoute allowedRoles={['handyman']} requireOnboarding={false}><HandymanOnboarding /></ProtectedRoute>} />
+        <Route path="/handyman/dashboard" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanDashboard /></ProtectedRoute>} />
+        <Route path="/handyman/jobs" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanJobs /></ProtectedRoute>} />
+        <Route path="/handyman/reviews" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanReviews /></ProtectedRoute>} />
+        <Route path="/handyman/services" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanServices /></ProtectedRoute>} />
+        <Route path="/handyman/feed" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanFeed /></ProtectedRoute>} />
+        <Route path="/handyman/my-profile" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanMyProfile /></ProtectedRoute>} />
+        <Route path="/handyman/personal-profile" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanPersonalProfile /></ProtectedRoute>} />
         
       </Routes>
     </BrowserRouter>
