@@ -1,203 +1,161 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { supabase } from '../supabase'
 import HandymanNavbar from '../components/handyman-dashboard/HandymanNavbar'
+import HandymanServiceModal from '../components/handyman-services/HandymanServiceModal'
 import {
   Plus, Edit2, Trash2, Star, Briefcase, DollarSign,
-  Clock, Calendar, Settings, BarChart3, X, CheckCircle
+  Clock, Settings, BarChart3, X, CheckCircle, Loader2,
+  ToggleRight, ToggleLeft, Flame, Tag, ChevronRight, ImagePlus
 } from 'lucide-react'
 
-const mockServices = [
-  {
-    id: 1,
-    title: 'Instalare Iluminat',
-    description: 'Montaj sisteme de iluminat interior și exterior pentru ambianță și siguranță',
-    bookings: 15,
-    duration: '2-3 ore',
-    rating: 4.8,
-    basePrice: 250,
-    perHour: 150,
-    totalRevenue: 4150,
-    lastBooking: 'Dec 06',
-    tags: ['Prize', 'Întrerupătoare', 'Cablaj', 'Reparații'],
-  },
-  {
-    id: 2,
-    title: 'Instalare Întrerupătoare',
-    description: 'Instalare și upgrade întrerupătoare pentru siguranță și conformitate',
-    bookings: 10,
-    duration: '3-4 ore',
-    rating: 4.7,
-    basePrice: 300,
-    perHour: 120,
-    totalRevenue: 3600,
-    lastBooking: 'Dec 04',
-    tags: ['Upgrade', 'Testare', 'Conformitate', 'Instalare'],
-  },
-  {
-    id: 3,
-    title: 'Instalare Generator',
-    description: 'Instalare și configurare generatoare backup pentru rezidențial și comercial',
-    bookings: 8,
-    duration: '4-6 ore',
-    rating: 4.7,
-    basePrice: 400,
-    perHour: 250,
-    totalRevenue: 8000,
-    lastBooking: 'Dec 04',
-    tags: ['Linii Alimentare', 'Sisteme Control', 'Conexiuni', 'Configurare'],
-  },
-  {
-    id: 4,
-    title: 'Cablaj Generator',
-    description: 'Configurare cablaj pentru generatoare standby pentru alimentare fiabilă',
-    bookings: 12,
-    duration: '4-5 ore',
-    rating: 4.6,
-    basePrice: 350,
-    perHour: 180,
-    totalRevenue: 5400,
-    lastBooking: 'Dec 01',
-    tags: ['Instalare', 'Testare', 'Integrare', 'Suport'],
-  },
-  {
-    id: 5,
-    title: 'Upgrade Panou Electric',
-    description: 'Upgrade și înlocuire panouri electrice existente pentru capacitate crescută',
-    bookings: 10,
-    duration: '3-5 ore',
-    rating: 4.9,
-    basePrice: 300,
-    perHour: 250,
-    totalRevenue: 6000,
-    lastBooking: 'Dec 05',
-    tags: ['Siguranțe', 'Întrerupătoare', 'Siguranță', 'Instalare'],
-  },
-  {
-    id: 6,
-    title: 'Sistem Protecție Supratensiune',
-    description: 'Instalare protecție supratensiune pentru echipamente contra spike-urilor de tensiune',
-    bookings: 8,
-    duration: '2-3 ore',
-    rating: 4.9,
-    basePrice: 200,
-    perHour: 100,
-    totalRevenue: 2000,
-    lastBooking: 'Dec 02',
-    tags: ['Protecție', 'Siguranță', 'Instalare', 'Consultanță'],
-  },
-  {
-    id: 7,
-    title: 'Sistem Cablaj Casă',
-    description: 'Instalare completă sisteme cablaj pentru construcții noi',
-    bookings: 5,
-    duration: '1-2 săpt.',
-    rating: 4.6,
-    basePrice: 350,
-    perHour: 220,
-    totalRevenue: 7000,
-    lastBooking: 'Dec 03',
-    tags: ['Cablaj', 'Prize', 'Tablouri', 'Instalare'],
-  },
-  {
-    id: 8,
-    title: 'Sisteme Automatizare Casă',
-    description: 'Instalare sisteme smart home pentru control automat iluminat și aparatură',
-    bookings: 15,
-    duration: '5-6 ore',
-    rating: 4.9,
-    basePrice: 500,
-    perHour: 200,
-    totalRevenue: 6500,
-    lastBooking: 'Nov 29',
-    tags: ['Dispozitive Smart', 'Instalare', 'Programare', 'Consultanță'],
-  },
-]
-
 const emptyService = {
-  title: '',
-  description: '',
-  basePrice: '',
-  perHour: '',
-  duration: '',
-  tags: [],
+  title: '', description: '', base_price: '', price_per_hour: '',
+  estimated_duration: '', keywords: [], is_available: true,
 }
 
 export default function HandymanServices() {
-  const [tab, setTab] = useState('services')
-  const [services, setServices] = useState(mockServices)
+  const [tab,          setTab]          = useState('services')
+  const [services,     setServices]     = useState([])
+  const [loading,      setLoading]      = useState(true)
+  const [handymanId,   setHandymanId]   = useState(null)
+  const [categories,   setCategories]   = useState([])
+  const [detailId,     setDetailId]     = useState(null)   // modal detail
   const [showAddModal, setShowAddModal] = useState(false)
-  const [editingService, setEditingService] = useState(null)
-  const [deleteConfirm, setDeleteConfirm] = useState(null)
-  const [newService, setNewService] = useState({ ...emptyService })
-  const [tagInput, setTagInput] = useState('')
+  const [newService,   setNewService]   = useState({ ...emptyService })
+  const [tagInput,     setTagInput]     = useState('')
+  const [adding,       setAdding]       = useState(false)
+  const [deleteConfirm,setDeleteConfirm]= useState(null)
+  const [deleting,     setDeleting]     = useState(false)
+  const [pendingPhotos,setPendingPhotos]= useState([])   // File[] înainte de insert
+  const [uploadingPhoto,setUploadingPhoto] = useState(false)
 
-  const totalBookings = services.reduce((a, b) => a + b.bookings, 0)
-  const totalRevenue = services.reduce((a, b) => a + b.totalRevenue, 0)
-  const avgRating = (services.reduce((a, b) => a + b.rating, 0) / services.length).toFixed(1)
+  // ── load ────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      setHandymanId(user.id)
 
-  const openEdit = (service) => {
-    setEditingService(service.id)
-    setNewService({
-      title: service.title,
-      description: service.description,
-      basePrice: service.basePrice,
-      perHour: service.perHour,
-      duration: service.duration,
-      tags: [...service.tags],
-    })
-    setShowAddModal(true)
-  }
-
-  const openAdd = () => {
-    setEditingService(null)
-    setNewService({ ...emptyService })
-    setShowAddModal(true)
-  }
-
-  const handleSave = () => {
-    if (editingService) {
-      setServices(prev => prev.map(s => s.id === editingService ? {
-        ...s,
-        ...newService,
-        basePrice: Number(newService.basePrice),
-        perHour: Number(newService.perHour),
-      } : s))
-    } else {
-      setServices(prev => [...prev, {
-        id: Date.now(),
-        ...newService,
-        basePrice: Number(newService.basePrice),
-        perHour: Number(newService.perHour),
-        bookings: 0,
-        rating: 0,
-        totalRevenue: 0,
-        lastBooking: 'Niciuna',
-      }])
+      const [{ data: svcData }, { data: catsData }] = await Promise.all([
+        supabase.from('handyman_services')
+          .select('*, categories(id, name, icon)')
+          .eq('handyman_id', user.id)
+          .order('created_at', { ascending: false }),
+        supabase.from('categories').select('id, name, icon').eq('is_active', true).order('name'),
+      ])
+      setServices(svcData ?? [])
+      setCategories(catsData ?? [])
+      setLoading(false)
     }
+    load()
+  }, [])
+
+  const reload = async () => {
+    if (!handymanId) return
+    const { data } = await supabase.from('handyman_services')
+      .select('*, categories(id, name, icon)')
+      .eq('handyman_id', handymanId)
+      .order('created_at', { ascending: false })
+    setServices(data ?? [])
+  }
+
+  // ── add service ─────────────────────────────────────────────────────────────
+  const handleAdd = async () => {
+    if (!newService.title || !handymanId) return
+    setAdding(true)
+
+    // 1. Insert serviciul și obținem ID-ul
+    const { data: inserted, error } = await supabase
+      .from('handyman_services')
+      .insert({
+        handyman_id:        handymanId,
+        title:              newService.title,
+        description:        newService.description || null,
+        base_price:         newService.base_price ? Number(newService.base_price) : null,
+        price_per_hour:     newService.price_per_hour ? Number(newService.price_per_hour) : null,
+        estimated_duration: newService.estimated_duration || null,
+        keywords:           newService.keywords,
+        is_available:       true,
+        category_id:        newService.category_id || null,
+      })
+      .select('id')
+      .single()
+
+    if (error || !inserted) {
+      setAdding(false)
+      return
+    }
+
+    const newId = inserted.id
+
+    // 2. Upload poze dacă există
+    if (pendingPhotos.length > 0) {
+      setUploadingPhoto(true)
+      const uploadedUrls = []
+
+      for (const file of pendingPhotos.slice(0, 5)) {
+        const ext  = file.name.split('.').pop()
+        const path = `${handymanId}/${newId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const { error: upErr } = await supabase.storage
+          .from('service-photos')
+          .upload(path, file, { upsert: false })
+        if (!upErr) {
+          const { data: urlData } = supabase.storage.from('service-photos').getPublicUrl(path)
+          if (urlData?.publicUrl) uploadedUrls.push(urlData.publicUrl)
+        }
+      }
+
+      if (uploadedUrls.length) {
+        await supabase.from('handyman_services')
+          .update({ photos: uploadedUrls })
+          .eq('id', newId)
+      }
+      setUploadingPhoto(false)
+    }
+
+    setAdding(false)
     setShowAddModal(false)
     setNewService({ ...emptyService })
+    setTagInput('')
+    setPendingPhotos([])
+    reload()
   }
 
-  const handleDelete = (id) => {
-    setServices(prev => prev.filter(s => s.id !== id))
+  // ── delete service ──────────────────────────────────────────────────────────
+  const handleDelete = async (id) => {
+    setDeleting(true)
+    await supabase.from('handyman_services').delete().eq('id', id)
     setDeleteConfirm(null)
+    setDeleting(false)
+    setServices(prev => prev.filter(s => s.id !== id))
   }
 
+  // ── toggle available ────────────────────────────────────────────────────────
+  const handleToggle = async (svc) => {
+    const newVal = !svc.is_available
+    await supabase.from('handyman_services').update({ is_available: newVal }).eq('id', svc.id)
+    setServices(prev => prev.map(s => s.id === svc.id ? { ...s, is_available: newVal } : s))
+  }
+
+  // ── tag helpers ─────────────────────────────────────────────────────────────
   const addTag = () => {
     const t = tagInput.trim()
-    if (t && !newService.tags.includes(t) && newService.tags.length < 6) {
-      setNewService(prev => ({ ...prev, tags: [...prev.tags, t] }))
+    if (t && !newService.keywords.includes(t) && newService.keywords.length < 8) {
+      setNewService(p => ({ ...p, keywords: [...p.keywords, t] }))
     }
     setTagInput('')
   }
+  const removeTag = (tag) => setNewService(p => ({ ...p, keywords: p.keywords.filter(t => t !== tag) }))
 
-  const removeTag = (tag) => {
-    setNewService(prev => ({ ...prev, tags: prev.tags.filter(t => t !== tag) }))
-  }
+  // ── stats ────────────────────────────────────────────────────────────────────
+  const totalBookings = services.reduce((a, b) => a + (b.times_booked ?? 0), 0)
+  const activeCount   = services.filter(s => s.is_available).length
 
   const tabs = [
-    { id: 'services', label: `Servicii (${services.length})` },
+    { id: 'services',  label: `Servicii (${services.length})` },
     { id: 'analytics', label: 'Analiză' },
-    { id: 'settings', label: 'Setări' },
+    { id: 'settings',  label: 'Setări' },
   ]
 
   return (
@@ -209,24 +167,21 @@ export default function HandymanServices() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-800">Gestionare Servicii</h1>
-            <p className="text-gray-500 mt-1">Gestionează serviciile oferite, prețurile și disponibilitatea</p>
+            <p className="text-gray-500 mt-1">Gestionează serviciile tale, prețurile și disponibilitatea</p>
           </div>
-          <button
-            onClick={openAdd}
-            className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition"
-          >
+          <button onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700 transition">
             <Plus className="w-4 h-4" /> Adaugă Serviciu
           </button>
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
           {[
-            { label: 'Servicii Active', value: services.length, icon: Settings, color: 'bg-blue-100 text-blue-600' },
-            { label: 'Total Rezervări', value: totalBookings, icon: Briefcase, color: 'bg-green-100 text-green-600' },
-            { label: 'Venituri Totale', value: `${totalRevenue.toLocaleString()} RON`, icon: DollarSign, color: 'bg-purple-100 text-purple-600' },
-            { label: 'Rating Mediu', value: avgRating, icon: Star, color: 'bg-yellow-100 text-yellow-600' },
-          ].map((stat) => (
+            { label: 'Servicii Active', value: activeCount,    icon: Settings,  color: 'bg-blue-100 text-blue-600' },
+            { label: 'Total Servicii',  value: services.length, icon: Briefcase, color: 'bg-green-100 text-green-600' },
+            { label: 'Total Rezervări', value: totalBookings,  icon: DollarSign, color: 'bg-purple-100 text-purple-600' },
+          ].map(stat => (
             <div key={stat.label} className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-sm text-gray-500">{stat.label}</p>
@@ -241,129 +196,160 @@ export default function HandymanServices() {
 
         {/* Tabs */}
         <div className="flex gap-2 mb-6 bg-white rounded-xl border border-gray-100 p-1.5">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)}
               className={`flex-1 py-2.5 rounded-lg text-sm font-medium text-center transition-all
                 ${tab === t.id ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}
-              `}
-            >
+              `}>
               {t.label}
             </button>
           ))}
         </div>
 
-        {/* Services Tab */}
+        {/* ── SERVICES TAB ── */}
         {tab === 'services' && (
-          <div className="grid md:grid-cols-2 gap-4">
-            {services.map((service) => (
-              <div key={service.id} className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-                {/* Service Header */}
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex-1">
-                    <h3 className="font-bold text-gray-800">{service.title}</h3>
-                    <p className="text-sm text-gray-500 mt-0.5 line-clamp-2">{service.description}</p>
-                  </div>
-                  <div className="flex items-center gap-1 ml-3">
-                    <button
-                      onClick={() => openEdit(service)}
-                      className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-400 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setDeleteConfirm(service.id)}
-                      className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-400 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Meta */}
-                <div className="flex items-center gap-4 text-xs text-gray-400 mb-4">
-                  <div className="flex items-center gap-1">
-                    <Briefcase className="w-3 h-3" />
-                    <span>{service.bookings} rezervări</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    <span>{service.duration}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                    <span className="text-gray-600 font-medium">{service.rating}</span>
-                  </div>
-                </div>
-
-                {/* Pricing Grid */}
-                <div className="grid grid-cols-4 gap-3 mb-4 pb-4 border-b border-gray-100">
-                  <div>
-                    <p className="text-xs text-gray-400">Preț Bază</p>
-                    <p className="font-bold text-gray-800 text-sm">{service.basePrice} RON</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-400">Pe Oră</p>
-                    <p className="font-bold text-gray-800 text-sm">{service.perHour} RON</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-400">Venituri Totale</p>
-                    <p className="font-bold text-gray-800 text-sm">{service.totalRevenue.toLocaleString()} RON</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-400">Ultima Rezervare</p>
-                    <p className="font-bold text-gray-800 text-sm">{service.lastBooking}</p>
-                  </div>
-                </div>
-
-                {/* Tags */}
-                <div className="flex flex-wrap gap-1.5">
-                  {service.tags.map((tag) => (
-                    <span key={tag} className="px-2.5 py-1 bg-gray-100 text-gray-600 text-xs rounded-lg font-medium">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
+          <>
+            {loading ? (
+              <div className="flex items-center justify-center py-24">
+                <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
               </div>
-            ))}
-          </div>
+            ) : services.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-100 p-16 text-center">
+                <Settings className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                <h3 className="font-bold text-gray-800 mb-2">Niciun serviciu adăugat</h3>
+                <p className="text-sm text-gray-500 mb-5">Adaugă serviciile pe care le oferi pentru a apărea în căutări</p>
+                <button onClick={() => setShowAddModal(true)}
+                  className="px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 transition">
+                  Adaugă primul serviciu
+                </button>
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-2 gap-4">
+                {services.map(service => (
+                  <div key={service.id}
+                    className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 hover:shadow-md transition cursor-pointer group"
+                    onClick={() => setDetailId(service.id)}>
+
+                    {/* header */}
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-bold text-gray-800 truncate">{service.title}</h3>
+                          {service.is_popular && (
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-orange-100 text-orange-600 text-[10px] font-bold rounded-full flex-shrink-0">
+                              <Flame className="w-2.5 h-2.5" /> Popular
+                            </span>
+                          )}
+                        </div>
+                        {service.categories && (
+                          <p className="text-xs text-blue-500 font-medium mt-0.5">{service.categories.name}</p>
+                        )}
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{service.description}</p>
+                      </div>
+                      <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                        {/* availability toggle */}
+                        <button onClick={e => { e.stopPropagation(); handleToggle(service) }}
+                          className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition flex-shrink-0 ${
+                            service.is_available
+                              ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                              : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                          }`}>
+                          {service.is_available ? 'Activ' : 'Inactiv'}
+                        </button>
+                        <button onClick={e => { e.stopPropagation(); setDeleteConfirm(service.id) }}
+                          className="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-400 hover:bg-red-50 hover:text-red-500 hover:border-red-200 transition">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* meta */}
+                    <div className="flex items-center gap-4 text-xs text-gray-400 mb-3 mt-3">
+                      <span className="flex items-center gap-1">
+                        <Briefcase className="w-3 h-3" />{service.times_booked ?? 0} rezervări
+                      </span>
+                      {service.estimated_duration && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />{service.estimated_duration}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* pricing */}
+                    <div className="flex items-center gap-4 pb-3 border-b border-gray-100 mb-3">
+                      {service.base_price && (
+                        <div>
+                          <p className="text-xs text-gray-400">Preț bază</p>
+                          <p className="font-bold text-gray-800 text-sm">{Number(service.base_price).toLocaleString('ro-RO')} RON</p>
+                        </div>
+                      )}
+                      {service.price_per_hour && (
+                        <div>
+                          <p className="text-xs text-gray-400">Pe oră</p>
+                          <p className="font-bold text-gray-800 text-sm">{Number(service.price_per_hour).toLocaleString('ro-RO')} RON</p>
+                        </div>
+                      )}
+                      <div className="ml-auto flex items-center gap-1 text-blue-500 text-xs font-medium group-hover:gap-2 transition-all">
+                        Detalii <ChevronRight className="w-3.5 h-3.5" />
+                      </div>
+                    </div>
+
+                    {/* keywords */}
+                    {Array.isArray(service.keywords) && service.keywords.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {service.keywords.slice(0, 4).map((kw, i) => (
+                          <span key={i} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-lg">{kw}</span>
+                        ))}
+                        {service.keywords.length > 4 && (
+                          <span className="px-2 py-0.5 bg-gray-100 text-gray-400 text-xs rounded-lg">+{service.keywords.length - 4}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
-        {/* Analytics Tab */}
+        {/* ── ANALYTICS TAB ── */}
         {tab === 'analytics' && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-8">
             <div className="text-center py-12">
               <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
               <h3 className="text-lg font-bold text-gray-800 mb-2">Analiză Servicii</h3>
-              <p className="text-gray-500 mb-4">Vizualizări detaliate ale performanței serviciilor tale vor fi disponibile aici.</p>
-
-              <div className="grid md:grid-cols-3 gap-4 mt-8 max-w-2xl mx-auto">
-                {services.slice(0, 3).map((s) => (
-                  <div key={s.id} className="bg-gray-50 rounded-xl p-4 text-left">
-                    <h4 className="font-bold text-gray-800 text-sm mb-2">{s.title}</h4>
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Rezervări</span>
-                        <span className="font-bold">{s.bookings}</span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Venituri</span>
-                        <span className="font-bold">{s.totalRevenue.toLocaleString()} RON</span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-500">Rating</span>
-                        <span className="font-bold">{s.rating} ⭐</span>
+              <p className="text-gray-500 mb-8">Vizualizări detaliate ale performanței vor fi disponibile în curând.</p>
+              {services.slice(0, 3).length > 0 && (
+                <div className="grid md:grid-cols-3 gap-4 max-w-2xl mx-auto">
+                  {services.slice(0, 3).map(s => (
+                    <div key={s.id} className="bg-gray-50 rounded-xl p-4 text-left cursor-pointer hover:bg-blue-50 transition"
+                      onClick={() => setDetailId(s.id)}>
+                      <h4 className="font-bold text-gray-800 text-sm mb-2 truncate">{s.title}</h4>
+                      <div className="space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Rezervări</span>
+                          <span className="font-bold">{s.times_booked ?? 0}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Preț bază</span>
+                          <span className="font-bold">{s.base_price ? `${Number(s.base_price).toLocaleString('ro-RO')} RON` : '—'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Status</span>
+                          <span className={`font-bold ${s.is_available ? 'text-green-600' : 'text-gray-400'}`}>
+                            {s.is_available ? 'Activ' : 'Inactiv'}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* Settings Tab */}
+        {/* ── SETTINGS TAB ── */}
         {tab === 'settings' && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
             <h3 className="font-bold text-gray-800 mb-6">Setări Servicii</h3>
@@ -378,21 +364,9 @@ export default function HandymanServices() {
               <div>
                 <label className="block text-sm font-bold text-gray-800 mb-2">Rază de lucru implicită</label>
                 <select className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option>Sub 5 km</option>
-                  <option>Sub 10 km</option>
-                  <option>Sub 15 km</option>
-                  <option>Sub 25 km</option>
-                  <option>Sub 50 km</option>
+                  <option>Sub 5 km</option><option>Sub 10 km</option>
+                  <option>Sub 15 km</option><option>Sub 25 km</option><option>Sub 50 km</option>
                 </select>
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-gray-800 mb-2">Acceptare automată rezervări</label>
-                <div className="flex items-center gap-3">
-                  <button className="w-12 h-7 bg-gray-200 rounded-full relative transition">
-                    <div className="w-5 h-5 bg-white rounded-full absolute top-1 left-1 shadow transition" />
-                  </button>
-                  <span className="text-sm text-gray-500">Dezactivat - Verifici manual fiecare cerere</span>
-                </div>
               </div>
               <div>
                 <label className="block text-sm font-bold text-gray-800 mb-2">Notificări cereri noi</label>
@@ -400,7 +374,7 @@ export default function HandymanServices() {
                   <button className="w-12 h-7 bg-blue-600 rounded-full relative transition">
                     <div className="w-5 h-5 bg-white rounded-full absolute top-1 right-1 shadow transition" />
                   </button>
-                  <span className="text-sm text-gray-500">Activat - Primești notificări pentru cereri noi</span>
+                  <span className="text-sm text-gray-500">Activat — Primești notificări pentru cereri noi</span>
                 </div>
               </div>
               <button className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition">
@@ -411,135 +385,196 @@ export default function HandymanServices() {
         )}
       </div>
 
-      {/* Add/Edit Modal */}
+      {/* ── ADD SERVICE MODAL ── */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4" onClick={() => setShowAddModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <h2 className="text-lg font-bold text-gray-800">
-                {editingService ? 'Editează Serviciu' : 'Adaugă Serviciu Nou'}
-              </h2>
-              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
+          onClick={() => { setShowAddModal(false); setPendingPhotos([]) }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden max-h-[90dvh] flex flex-col"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-gray-100 flex-shrink-0">
+              <h2 className="text-lg font-bold text-gray-800">Adaugă Serviciu Nou</h2>
+              <button onClick={() => { setShowAddModal(false); setPendingPhotos([]) }}
+                className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
                 <X className="w-5 h-5 text-gray-400" />
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">Nume serviciu *</label>
-                <input
-                  type="text"
-                  value={newService.title}
-                  onChange={(e) => setNewService(p => ({ ...p, title: e.target.value }))}
+                <label className="block text-sm font-bold text-gray-800 mb-1.5">Titlu *</label>
+                <input type="text" value={newService.title}
+                  onChange={e => setNewService(p => ({ ...p, title: e.target.value }))}
                   placeholder="Ex: Instalare Iluminat"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
+              </div>
+
+              {/* ── PHOTO PICKER ── */}
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-1.5">
+                  Poze serviciu
+                  <span className="ml-1.5 text-xs font-normal text-gray-400">
+                    ({pendingPhotos.length}/5 · opțional)
+                  </span>
+                </label>
+
+                {/* previzualizare poze selectate */}
+                {pendingPhotos.length > 0 && (
+                  <div className="grid grid-cols-4 gap-2 mb-2">
+                    {pendingPhotos.map((file, i) => (
+                      <div key={i} className="relative group aspect-square rounded-xl overflow-hidden bg-gray-100 border border-gray-200">
+                        <img
+                          src={URL.createObjectURL(file)}
+                          alt=""
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          onClick={() => setPendingPhotos(prev => prev.filter((_, j) => j !== i))}
+                          className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition hover:bg-red-600"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                        {i === 0 && (
+                          <span className="absolute bottom-1 left-1 text-[9px] bg-black/50 text-white px-1 py-0.5 rounded-full font-medium">
+                            Principală
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {pendingPhotos.length < 5 && (
+                  <label className="flex items-center justify-center gap-2.5 w-full py-4 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition">
+                    <ImagePlus className="w-5 h-5 text-gray-400" />
+                    <div>
+                      <span className="text-sm text-gray-600 font-medium">Alege poze</span>
+                      <span className="text-xs text-gray-400 ml-1.5">PNG, JPG, WEBP</span>
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      multiple
+                      onChange={e => {
+                        const files = Array.from(e.target.files ?? [])
+                        setPendingPhotos(prev => [...prev, ...files].slice(0, 5))
+                        e.target.value = ''
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                )}
               </div>
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">Descriere</label>
-                <textarea
-                  value={newService.description}
-                  onChange={(e) => setNewService(p => ({ ...p, description: e.target.value }))}
-                  placeholder="Descrie serviciul oferit..."
-                  rows={3}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                />
+                <label className="block text-sm font-bold text-gray-800 mb-1.5">Descriere</label>
+                <textarea value={newService.description}
+                  onChange={e => setNewService(p => ({ ...p, description: e.target.value }))}
+                  rows={3} placeholder="Descrie serviciul..."
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm" />
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-1.5">Categorie</label>
+                <select value={newService.category_id ?? ''}
+                  onChange={e => setNewService(p => ({ ...p, category_id: e.target.value }))}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                  <option value="">Selectează categoria</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-sm font-bold text-gray-800 mb-1">Preț Bază (RON)</label>
-                  <input
-                    type="number"
-                    value={newService.basePrice}
-                    onChange={(e) => setNewService(p => ({ ...p, basePrice: e.target.value }))}
+                  <label className="block text-sm font-bold text-gray-800 mb-1.5">Preț bază (RON)</label>
+                  <input type="number" value={newService.base_price}
+                    onChange={e => setNewService(p => ({ ...p, base_price: e.target.value }))}
                     placeholder="250"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-gray-800 mb-1">Pe Oră (RON)</label>
-                  <input
-                    type="number"
-                    value={newService.perHour}
-                    onChange={(e) => setNewService(p => ({ ...p, perHour: e.target.value }))}
+                  <label className="block text-sm font-bold text-gray-800 mb-1.5">Pe oră (RON)</label>
+                  <input type="number" value={newService.price_per_hour}
+                    onChange={e => setNewService(p => ({ ...p, price_per_hour: e.target.value }))}
                     placeholder="150"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-gray-800 mb-1">Durată</label>
-                  <input
-                    type="text"
-                    value={newService.duration}
-                    onChange={(e) => setNewService(p => ({ ...p, duration: e.target.value }))}
+                  <label className="block text-sm font-bold text-gray-800 mb-1.5">Durată</label>
+                  <input type="text" value={newService.estimated_duration}
+                    onChange={e => setNewService(p => ({ ...p, estimated_duration: e.target.value }))}
                     placeholder="2-3 ore"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">Tag-uri</label>
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {newService.tags.map((tag) => (
+                <label className="block text-sm font-bold text-gray-800 mb-1.5">Cuvinte cheie</label>
+                <div className="flex flex-wrap gap-1.5 mb-2 min-h-[28px]">
+                  {newService.keywords.map(tag => (
                     <span key={tag} className="flex items-center gap-1 px-2.5 py-1 bg-blue-100 text-blue-700 text-xs rounded-lg font-medium">
                       {tag}
-                      <button onClick={() => removeTag(tag)} className="hover:text-red-500"><X className="w-3 h-3" /></button>
+                      <button onClick={() => removeTag(tag)} className="hover:text-red-500 transition">
+                        <X className="w-3 h-3" />
+                      </button>
                     </span>
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
-                    placeholder="Adaugă tag și apasă Enter..."
-                    className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                  />
-                  <button onClick={addTag} className="px-4 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-200 transition">
+                  <input type="text" value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag() }}}
+                    placeholder="Adaugă tag și apasă Enter…"
+                    className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
+                  <button onClick={addTag}
+                    className="px-4 py-2.5 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-200 transition">
                     Adaugă
                   </button>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-100">
-              <button onClick={() => setShowAddModal(false)}
-                className="px-5 py-2.5 border border-gray-200 rounded-xl font-medium text-gray-600 hover:bg-gray-50 transition">
+            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-100 flex-shrink-0">
+              <button onClick={() => { setShowAddModal(false); setPendingPhotos([]) }}
+                className="px-5 py-2.5 border border-gray-200 rounded-xl font-medium text-gray-600 hover:bg-gray-50 transition text-sm">
                 Anulează
               </button>
-              <button onClick={handleSave}
-                disabled={!newService.title}
-                className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition disabled:opacity-50">
-                {editingService ? 'Salvează Modificările' : 'Adaugă Serviciu'}
+              <button onClick={handleAdd} disabled={!newService.title || adding || uploadingPhoto}
+                className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition disabled:opacity-50 text-sm">
+                {(adding || uploadingPhoto) && <Loader2 className="w-4 h-4 animate-spin" />}
+                {uploadingPhoto ? 'Se încarcă pozele…' : adding ? 'Se adaugă…' : 'Adaugă Serviciu'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete Confirmation */}
+      {/* ── DELETE CONFIRM ── */}
       {deleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4" onClick={() => setDeleteConfirm(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
+          onClick={() => setDeleteConfirm(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center"
+            onClick={e => e.stopPropagation()}>
             <div className="w-14 h-14 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <Trash2 className="w-7 h-7 text-red-600" />
             </div>
             <h3 className="text-lg font-bold text-gray-800 mb-2">Șterge Serviciul?</h3>
-            <p className="text-sm text-gray-500 mb-6">Această acțiune este ireversibilă. Toate datele asociate vor fi pierdute.</p>
-            <div className="flex items-center gap-3 justify-center">
+            <p className="text-sm text-gray-500 mb-6">Această acțiune este ireversibilă.</p>
+            <div className="flex gap-3">
               <button onClick={() => setDeleteConfirm(null)}
-                className="px-5 py-2.5 border border-gray-200 rounded-xl font-medium text-gray-600 hover:bg-gray-50 transition">
+                className="flex-1 px-5 py-2.5 border border-gray-200 rounded-xl font-medium text-gray-600 hover:bg-gray-50 transition text-sm">
                 Anulează
               </button>
-              <button onClick={() => handleDelete(deleteConfirm)}
-                className="px-5 py-2.5 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 transition">
-                Șterge
+              <button onClick={() => handleDelete(deleteConfirm)} disabled={deleting}
+                className="flex-1 px-5 py-2.5 bg-red-600 text-white rounded-xl font-medium hover:bg-red-700 transition disabled:opacity-50 text-sm">
+                {deleting ? 'Se șterge…' : 'Șterge'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ── SERVICE DETAIL MODAL ── */}
+      <HandymanServiceModal
+        serviceId={detailId}
+        onClose={() => setDetailId(null)}
+        onUpdated={reload}
+      />
     </div>
   )
 }
