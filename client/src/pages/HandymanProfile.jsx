@@ -1,677 +1,512 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
+import { supabase } from '../supabase'
 import DashboardNavbar from '../components/dashboard/DashboardNavbar'
 import {
   ChevronLeft, MapPin, Clock, Star, CheckCircle, Heart, Share2,
-  Calendar, MessageSquare, Phone, Shield, Award, Briefcase,
-  Wrench, Zap, Hammer, Paintbrush,Target
+  Calendar, MessageSquare, Shield, Award, Briefcase,
+  Wrench, Globe, Loader2, Target, AlertCircle
 } from 'lucide-react'
 
-const mockHandymen = {
-  'ion-marin': {
-    name: 'Ion Marin',
-    address: 'Str. Victoriei 15, Timișoara',
-    rating: 4.9,
-    reviews: 127,
-    jobsCompleted: 234,
-    responseTime: '< 1 oră',
-    joinedDate: 'Martie 2020',
-    rate: '90 RON/h',
-    specialty: 'Instalații Electrice',
-    tags: ['Instalații Electrice', 'Tablouri Electrice', 'Iluminat'],
-    bio: 'Electrician profesionist cu peste 8 ani de experiență în lucrări electrice rezidențiale și comerciale. Specializat în recablări, instalații de iluminat și reparații electrice. Licențiat, asigurat și dedicat calității.',
-    verified: true,
-    phoneSupport: true,
-    messageGuarantee: true,
-    trust: {
-      backgroundVerified: true,
-      identityConfirmed: true,
-      licensedInsured: true,
-    },
-    portfolio: [
-      { title: 'Upgrade Electric Bucătărie', desc: 'Recablare completă bucătărie cu prize și iluminat sub dulap', date: 'Nov 2025', price: '850 RON', duration: '2 zile' },
-      { title: 'Iluminat Smart Living', desc: 'Instalare becuri smart și sistem de control pentru iluminat ambient', date: 'Dec 2025', price: '600 RON', duration: '1 zi' },
-      { title: 'Extensie Circuit Birou', desc: 'Adăugare circuite suplimentare pentru alimentare sigură birou', date: 'Ian 2026', price: '950 RON', duration: '3 zile' },
-      { title: 'Ventilator Baie', desc: 'Instalare și cablare ventilator evacuare baie pentru ventilație îmbunătățită', date: 'Feb 2026', price: '400 RON', duration: '1 zi' },
-    ],
-    reviewsList: [
-    { 
-        name: 'Maria Popescu', 
-        rating: 5, 
-        text: 'Excelent! A venit la timp, a lucrat curat și profesionist. A explicat totul clar și a curățat după el. Recomand cu toată încrederea!', 
-        date: 'Feb 2026', 
-        service: 'Instalații Electrice',
-        helpful: 12,
-        reply: 'Mulțumesc, Maria! A fost o plăcere să lucrez la proiectul dumneavoastră. Nu ezitați să mă contactați pentru orice lucrare viitoare.'
-    },
-    { 
-        name: 'Andrei Vasile', 
-        rating: 5, 
-        text: 'Foarte mulțumit de lucrare. Echipa a fost punctuală și foarte respectuoasă. Calitatea lucrării este de top!', 
-        date: 'Ian 2026', 
-        service: 'Recablare',
-        helpful: 103,
-        reply: 'Mulțumesc, Andrei! Mă bucur că sunteți mulțumit. Nu ezitați să ne contactați pentru alte proiecte.'
-    },
-    { 
-        name: 'Elena Dumitrescu', 
-        rating: 4, 
-        text: 'Experiență plăcută! Instalarea noilor lumini a fost impecabilă. Electricianul a fost prietenos și eficient. Voi angaja din nou cu siguranță!', 
-        date: 'Dec 2025', 
-        service: 'Instalare Iluminat',
-        helpful: 8,
-        reply: 'Mulțumim, Elena! Ne bucurăm că v-au plăcut noile lumini. Suntem aici dacă aveți nevoie.'
-    },
-    { 
-        name: 'Bogdan Cristea', 
-        rating: 5, 
-        text: 'Servicii fantastice! Au gestionat upgrade-ul panoului electric fără nicio problemă. Întregul proces a fost lin și fără stres. Recomand cu căldură.', 
-        date: 'Nov 2025', 
-        service: 'Upgrade Electric',
-        helpful: 15,
-        reply: 'Mulțumim, Bogdan! Ne bucurăm că upgrade-ul panoului a decurs perfect. Suntem aici pentru orice alte lucrări electrice.'
-    },
-    ],
-    certifications: [
-    { icon: Award, title: 'Electrician Licențiat', desc: 'Licență de Stat #EL-2019-456' },
-    { icon: Shield, title: 'Asigurare de Răspundere', desc: 'Acoperire 1M RON' },
-    { icon: CheckCircle, title: 'Verificare Background', desc: 'Verificat de HandyConnect' },
-    ],
-    serviceArea: {
-    location: 'Timișoara, Timiș',
-    radius: '15 km',
-    },
-    servicesProvided: [
-    {
-        title: 'Instalare Iluminat',
-        desc: 'Montaj sisteme de iluminat interior și exterior pentru ambianță și siguranță',
-        basePrice: '250 RON',
-        perHour: '90 RON',
-        totalRevenue: '4.150 RON',
-        lastBooking: 'Dec 06',
-        bookings: 15,
-        duration: '2-3 ore',
-        rating: 4.8,
-        tags: ['Prize', 'Întrerupătoare', 'Cablare', 'Reparații'],
-    },
-    {
-        title: 'Montaj Tablou Electric',
-        desc: 'Instalare și upgrade tablouri electrice pentru siguranță și conformitate',
-        basePrice: '300 RON',
-        perHour: '120 RON',
-        totalRevenue: '3.600 RON',
-        lastBooking: 'Dec 04',
-        bookings: 10,
-        duration: '3-4 ore',
-        rating: 4.7,
-        tags: ['Upgrade', 'Testare', 'Conformitate', 'Instalare'],
-    },
-    {
-        title: 'Recablare Completă',
-        desc: 'Instalare completă de cablare pentru construcții noi',
-        basePrice: '350 RON',
-        perHour: '220 RON',
-        totalRevenue: '7.000 RON',
-        lastBooking: 'Dec 03',
-        bookings: 5,
-        duration: '1-2 săpt.',
-        rating: 4.6,
-        tags: ['Cablare', 'Prize', 'Tablouri', 'Instalare'],
-    },
-    {
-        title: 'Automatizare Locuință',
-        desc: 'Instalare sisteme smart home pentru controlul automatizat al iluminatului și aparatelor',
-        basePrice: '500 RON',
-        perHour: '200 RON',
-        totalRevenue: '6.500 RON',
-        lastBooking: 'Nov 29',
-        bookings: 15,
-        duration: '5-6 ore',
-        rating: 4.9,
-        tags: ['Dispozitive Smart', 'Programare', 'Consultanță'],
-    },
-    ],
-    availability: {
-      luni: '08:00 - 18:00',
-      marti: '08:00 - 18:00',
-      miercuri: '08:00 - 18:00',
-      joi: '08:00 - 18:00',
-      vineri: '08:00 - 16:00',
-      sambata: '09:00 - 14:00',
-      duminica: 'Indisponibil',
-    }
-  },
-  'ana-dragomir': {
-    name: 'Ana Dragomir',
-    address: 'Bd. Revoluției 45, Timișoara',
-    rating: 4.9,
-    reviews: 112,
-    jobsCompleted: 180,
-    responseTime: '< 30 min',
-    joinedDate: 'Iunie 2021',
-    rate: '55 RON/h',
-    specialty: 'Curățenie',
-    tags: ['Curățenie Generală', 'Organizare', 'Curățenie Post-Renovare'],
-    bio: 'Specialist în curățenie profesională cu atenție la detalii. Ofer servicii de curățenie generală, curățenie profundă și organizare spații.',
-    verified: true,
-    phoneSupport: true,
-    messageGuarantee: true,
-    trust: { backgroundVerified: true, identityConfirmed: true, licensedInsured: true },
-    portfolio: [
-      { title: 'Curățenie Apartament 3 Camere', desc: 'Curățenie profundă completă cu igienizare', date: 'Feb 2026', price: '350 RON', duration: '1 zi' },
-      { title: 'Curățenie Post-Renovare', desc: 'Curățare completă după lucrări de zugrăvit și parchet', date: 'Ian 2026', price: '500 RON', duration: '2 zile' },
-    ],
-    reviewsList: [
-      { name: 'Simona Radu', rating: 5, text: 'Impecabilă! Apartamentul arată ca nou. Foarte atentă la detalii.', date: 'Feb 2026' },
-      { name: 'Mihai Stancu', rating: 5, text: 'Promptă, profesionistă și foarte organizată. O recomand!', date: 'Ian 2026' },
-    ],
-    availability: {
-      luni: '07:00 - 17:00', marti: '07:00 - 17:00', miercuri: '07:00 - 17:00',
-      joi: '07:00 - 17:00', vineri: '07:00 - 15:00', sambata: '08:00 - 13:00', duminica: 'Indisponibil',
-    }
-  },
+function StarRow({ rating, size = 'sm' }) {
+  const sz = size === 'sm' ? 'w-4 h-4' : 'w-5 h-5'
+  return (
+    <div className="flex gap-0.5">
+      {[1,2,3,4,5].map(i=>(
+        <Star key={i} className={`${sz} ${i<=Math.round(rating)?'fill-yellow-400 text-yellow-400':'text-gray-200'}`}/>
+      ))}
+    </div>
+  )
 }
-
-
-
 
 export default function HandymanProfile() {
   const { slug } = useParams()
-  const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState('portfolio')
-  const [isFavorite, setIsFavorite] = useState(false)
+  const navigate  = useNavigate()
+  const [activeTab,   setActiveTab]   = useState('servicii')
+  const [isFavorite,  setIsFavorite]  = useState(false)
+  const [loading,     setLoading]     = useState(true)
+  const [notFound,    setNotFound]    = useState(false)
 
-  const handyman = mockHandymen[slug]
+  // data
+  const [handyman,  setHandyman]  = useState(null)   // handyman_profiles row
+  const [profile,   setProfile]   = useState(null)   // profiles row (name, avatar)
+  const [services,  setServices]  = useState([])
+  const [reviews,   setReviews]   = useState([])
 
-  if (!handyman) {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <DashboardNavbar />
-        <div className="max-w-4xl mx-auto px-4 py-16 text-center">
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">Profil negăsit</h2>
-          <p className="text-gray-500 mb-6">Handymanul căutat nu există.</p>
-          <button onClick={() => navigate('/find-services')} className="text-blue-600 font-medium hover:underline">
-            ← Înapoi la căutare
-          </button>
-        </div>
-      </div>
-    )
-  }
+  // ── load ──────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
 
-  const initials = handyman.name.split(' ').map(n => n[0]).join('')
+      // 1. get all profiles to find one matching the slug
+      // slug = firstName-lastName normalized
+      const { data: allProfiles } = await supabase
+        .from('profiles')
+        .select('id, first_name, last_name, avatar_url, phone, email')
+
+      if (!allProfiles?.length) { setNotFound(true); setLoading(false); return }
+
+      // find matching slug
+      function slugify(f, l) {
+        return `${f}-${l}`.toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+          .replace(/\s+/g,'-').replace(/[^a-z0-9-]/g,'')
+      }
+
+      const matched = allProfiles.find(p =>
+        slugify(p.first_name ?? '', p.last_name ?? '') === slug
+      )
+      if (!matched) { setNotFound(true); setLoading(false); return }
+
+      setProfile(matched)
+
+      // 2. handyman_profiles
+      const { data: hp } = await supabase
+        .from('handyman_profiles')
+        .select('*')
+        .eq('user_id', matched.id)
+        .maybeSingle()
+
+      if (!hp) { setNotFound(true); setLoading(false); return }
+      setHandyman(hp)
+
+      // 3. services
+      const { data: svcs } = await supabase
+        .from('handyman_services')
+        .select('id, handyman_id, title, description, base_price, price_per_hour, estimated_duration, photos, keywords, times_booked, is_popular, category_id, categories(id,name)')
+        .eq('handyman_id', matched.id)
+        .eq('is_available', true)
+        .order('created_at', { ascending: false })
+      setServices(svcs ?? [])
+
+      // 4. reviews via bookings
+      const { data: bIds } = await supabase
+        .from('bookings')
+        .select('id')
+        .eq('handyman_id', matched.id)
+
+      let revs = []
+      if (bIds?.length) {
+        const { data } = await supabase
+          .from('reviews')
+          .select('id,rating,title,description,created_at,reviewer:reviewer_id(first_name,last_name,avatar_url)')
+          .in('booking_id', bIds.map(b=>b.id))
+          .order('created_at', { ascending: false })
+          .limit(20)
+        revs = data ?? []
+      }
+      setReviews(revs)
+      setLoading(false)
+    }
+    load()
+  }, [slug])
+
+  // ── derived ───────────────────────────────────────────────────────────────
+  const firstName = profile?.first_name ?? ''
+  const lastName  = profile?.last_name  ?? ''
+  const fullName  = `${firstName} ${lastName}`.trim() || 'Handyman'
+  const initStr   = `${firstName[0]??''}${lastName[0]??''}`.toUpperCase()
+  const avatarUrl = profile?.avatar_url ?? null
+  const location  = [handyman?.primary_city, handyman?.primary_county].filter(Boolean).join(', ') || '—'
+  const ratingAvg = handyman?.rating_avg ?? (reviews.length ? reviews.reduce((a,b)=>a+b.rating,0)/reviews.length : 0)
+  const availDays = handyman?.available_days ?? []
+
+  const DAYS_LABEL = { luni:'Luni', marti:'Marți', miercuri:'Miercuri', joi:'Joi', vineri:'Vineri', sambata:'Sâmbătă', duminica:'Duminică' }
 
   const tabs = [
-    { id: 'portfolio', label: 'Portofoliu' },
-    { id: 'reviews', label: 'Recenzii' },
-    { id: 'about', label: 'Despre' },
-    { id: 'availability', label: 'Disponibilitate' },
+    { id:'servicii',        label:'Servicii' },
+    { id:'recenzii',        label:`Recenzii (${reviews.length})` },
+    { id:'disponibilitate', label:'Disponibilitate' },
+    { id:'despre',          label:'Despre' },
   ]
 
+  // ── loading ────────────────────────────────────────────────────────────────
+  if (loading) return (
+    <div className="min-h-screen bg-gray-50">
+      <DashboardNavbar/>
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin"/>
+      </div>
+    </div>
+  )
+
+  // ── not found ──────────────────────────────────────────────────────────────
+  if (notFound) return (
+    <div className="min-h-screen bg-gray-50">
+      <DashboardNavbar/>
+      <div className="max-w-4xl mx-auto px-4 py-16 text-center">
+        <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-4"/>
+        <h2 className="text-xl font-bold text-gray-800 mb-2">Profil negăsit</h2>
+        <p className="text-gray-500 mb-6 text-sm">Handymanul căutat nu există sau nu are un profil activ.</p>
+        <button onClick={()=>navigate('/find-services')} className="text-blue-600 font-medium hover:underline text-sm">
+          ← Înapoi la căutare
+        </button>
+      </div>
+    </div>
+  )
+
+  // ═════════════════════════════════════════════════════════════════════════════
   return (
     <div className="min-h-screen bg-gray-50">
-      <DashboardNavbar />
+      <DashboardNavbar/>
 
       <div className="max-w-6xl mx-auto px-4 py-6">
-        {/* Back button */}
-        <button
-          onClick={() => navigate(-1)}
-          className="flex items-center gap-1 text-gray-500 hover:text-blue-600 transition mb-6 text-sm font-medium"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          Înapoi la căutare
+        <button onClick={()=>navigate(-1)}
+          className="flex items-center gap-1 text-gray-500 hover:text-blue-600 transition mb-6 text-sm font-medium">
+          <ChevronLeft className="w-4 h-4"/> Înapoi la căutare
         </button>
 
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Main Content */}
+
+          {/* ═══ MAIN ═══ */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Profile Header */}
-            <div className="bg-white rounded-xl border border-gray-100 p-6">
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-xl">
-                    {initials}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h1 className="text-xl font-bold text-gray-800">{handyman.name}</h1>
-                      {handyman.verified && <CheckCircle className="w-5 h-5 text-blue-600" />}
-                    </div>
-                    <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
-                      <div className="flex items-center gap-1">
-                        <MapPin className="w-4 h-4" />
-                        <span>{handyman.address}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Clock className="w-4 h-4" />
-                        <span>Răspunde {handyman.responseTime}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 mt-2">
-                      <div className="flex items-center gap-1">
-                        <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                        <span className="font-medium text-gray-800">{handyman.rating}</span>
-                        <span className="text-sm text-gray-400">({handyman.reviews} recenzii)</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-sm text-gray-500">
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                        <span>{handyman.jobsCompleted} lucrări finalizate</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsFavorite(!isFavorite)}
-                    className={`w-10 h-10 rounded-lg border flex items-center justify-center transition
-                      ${isFavorite ? 'bg-red-50 border-red-200 text-red-500' : 'border-gray-200 text-gray-400 hover:text-red-500'}
-                    `}
-                  >
-                    <Heart className={`w-5 h-5 ${isFavorite ? 'fill-red-500' : ''}`} />
-                  </button>
-                  <button className="w-10 h-10 rounded-lg border border-gray-200 text-gray-400 hover:text-blue-600 flex items-center justify-center transition">
-                    <Share2 className="w-5 h-5" />
-                  </button>
-                </div>
+
+            {/* ── profile header card ── */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              {/* cover */}
+              <div className="h-32 relative">
+                {handyman?.cover_url
+                  ? <img src={handyman.cover_url} alt="" className="w-full h-full object-cover"/>
+                  : <div className="w-full h-full bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-500"
+                      style={{backgroundImage:'radial-gradient(circle at 20% 50%, rgba(255,255,255,0.15) 1px, transparent 1px)',backgroundSize:'40px 40px'}}/>
+                }
               </div>
 
-              {/* Tags */}
-              <div className="flex flex-wrap gap-2 mb-4">
-                {handyman.tags.map((tag) => (
-                  <span key={tag} className="px-3 py-1 bg-blue-100 text-blue-700 text-sm rounded-lg font-medium">
-                    {tag}
+              <div className="px-6 pb-6">
+                <div className="flex items-end justify-between -mt-10 mb-4">
+                  <div className="w-20 h-20 rounded-2xl border-4 border-white shadow-lg overflow-hidden bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center">
+                    {avatarUrl
+                      ? <img src={avatarUrl} alt="" className="w-full h-full object-cover"/>
+                      : <span className="text-white font-black text-2xl">{initStr}</span>
+                    }
+                  </div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <button onClick={()=>setIsFavorite(f=>!f)}
+                      className={`w-9 h-9 rounded-xl border flex items-center justify-center transition ${isFavorite?'bg-red-50 border-red-200 text-red-500':'border-gray-200 text-gray-400 hover:text-red-400'}`}>
+                      <Heart className={`w-4 h-4 ${isFavorite?'fill-red-500':''}`}/>
+                    </button>
+                    <button className="w-9 h-9 rounded-xl border border-gray-200 text-gray-400 hover:text-blue-600 flex items-center justify-center transition">
+                      <Share2 className="w-4 h-4"/>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 mb-1">
+                  <h1 className="text-xl font-bold text-gray-800">{fullName}</h1>
+                  {handyman?.is_verified&&<CheckCircle className="w-5 h-5 text-blue-500"/>}
+                  {handyman?.has_insurance&&<Shield className="w-5 h-5 text-green-500"/>}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 mb-3">
+                  <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5"/>{location}</span>
+                  {handyman?.work_radius_km&&<span className="flex items-center gap-1"><Globe className="w-3.5 h-3.5"/>Rază {handyman.work_radius_km} km</span>}
+                  {handyman?.experience_years&&<span className="flex items-center gap-1"><Award className="w-3.5 h-3.5"/>{handyman.experience_years} ani exp.</span>}
+                  <span className={`flex items-center gap-1 font-medium ${handyman?.is_available?'text-green-600':'text-gray-400'}`}>
+                    <span className={`w-2 h-2 rounded-full ${handyman?.is_available?'bg-green-500 animate-pulse':'bg-gray-400'}`}/>
+                    {handyman?.is_available?'Disponibil acum':'Indisponibil'}
                   </span>
-                ))}
-              </div>
+                </div>
 
-              <p className="text-gray-600 leading-relaxed">{handyman.bio}</p>
+                {/* stats row */}
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  {[
+                    { icon: Star,     value: ratingAvg>0?Number(ratingAvg).toFixed(1):'—', label:'Rating',   color:'text-yellow-500 bg-yellow-50' },
+                    { icon: Briefcase,value: handyman?.total_jobs_completed??0,             label:'Lucrări',  color:'text-blue-600 bg-blue-50' },
+                    { icon: MessageSquare,value: reviews.length,                            label:'Recenzii', color:'text-purple-600 bg-purple-50' },
+                  ].map((s,i)=>(
+                    <div key={i} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl ${s.color}`}>
+                      <s.icon className="w-4 h-4 flex-shrink-0"/>
+                      <div>
+                        <p className="text-sm font-black">{s.value}</p>
+                        <p className="text-xs opacity-70">{s.label}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* specialties */}
+                {(handyman?.specialties?.length > 0) && (
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {handyman.specialties.map(s=>(
+                      <span key={s} className="px-3 py-1 bg-blue-50 text-blue-700 text-sm font-medium rounded-full border border-blue-100">{s}</span>
+                    ))}
+                  </div>
+                )}
+
+                {/* bio */}
+                {handyman?.bio && <p className="text-sm text-gray-600 leading-relaxed">{handyman.bio}</p>}
+              </div>
             </div>
 
-            {/* Tabs */}
-            <div className="bg-white rounded-xl border border-gray-100">
+            {/* ── TABS ── */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
               <div className="flex border-b border-gray-100">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex-1 py-3 text-sm font-medium text-center transition-all relative
-                      ${activeTab === tab.id
-                        ? 'text-blue-600'
-                        : 'text-gray-500 hover:text-gray-700'
-                      }
-                      ${activeTab === tab.id ? 'after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-blue-600' : ''}
-                    `}
-                  >
-                    {tab.label}
+                {tabs.map(t=>(
+                  <button key={t.id} onClick={()=>setActiveTab(t.id)}
+                    className={`flex-1 py-3.5 text-sm font-medium transition border-b-2 ${activeTab===t.id?'border-blue-600 text-blue-600':'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                    {t.label}
                   </button>
                 ))}
               </div>
 
               <div className="p-6">
-                {/* Portfolio */}
-                {activeTab === 'portfolio' && (
-                  <div className="grid grid-cols-2 gap-4">
-                    {handyman.portfolio.map((item, i) => (
-                      <div key={i} className="border border-gray-100 rounded-xl overflow-hidden hover:shadow-md transition group">
-                        <div className="h-40 bg-gradient-to-br from-blue-100 to-blue-200 flex items-center justify-center">
-                          <Wrench className="w-12 h-12 text-blue-400 group-hover:scale-110 transition-transform" />
-                        </div>
-                        <div className="p-4">
-                          <h4 className="font-bold text-gray-800 mb-1">{item.title}</h4>
-                          <p className="text-sm text-gray-500 mb-3">{item.desc}</p>
-                          <div className="flex items-center justify-between text-xs text-gray-400">
-                            <span>{item.date}</span>
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold text-blue-600">{item.price}</span>
-                              <span>· {item.duration}</span>
+
+                {/* SERVICII */}
+                {activeTab==='servicii'&&(
+                  services.length===0 ? (
+                    <div className="text-center py-10">
+                      <Wrench className="w-10 h-10 text-gray-200 mx-auto mb-3"/>
+                      <p className="text-sm text-gray-400">Niciun serviciu activ momentan</p>
+                    </div>
+                  ) : (
+                    <div className="grid md:grid-cols-2 gap-4">
+                      {services.map(svc=>(
+                        <div key={svc.id} className="border border-gray-100 rounded-xl overflow-hidden hover:shadow-md transition group">
+
+                          {/* photo */}
+                          {Array.isArray(svc.photos)&&svc.photos[0]
+                            ? <div className="h-44 overflow-hidden">
+                                <img src={svc.photos[0]} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"/>
+                              </div>
+                            : <div className="h-44 bg-gradient-to-br from-blue-100 to-blue-200 flex items-center justify-center">
+                                <Wrench className="w-12 h-12 text-blue-400 group-hover:scale-110 transition-transform"/>
+                              </div>
+                          }
+
+                          <div className="p-4">
+                            {/* title + category */}
+                            <h4 className="font-bold text-gray-800 mb-0.5">{svc.title}</h4>
+                            {svc.categories&&(
+                              <p className="text-xs text-blue-500 font-semibold mb-2">{svc.categories.name}</p>
+                            )}
+                            <p className="text-sm text-gray-500 mb-4 line-clamp-2">{svc.description}</p>
+
+                            {/* pricing cards */}
+                            <div className="grid grid-cols-2 gap-2 mb-4">
+                              <div className="bg-blue-50 rounded-xl p-3 text-center">
+                                <p className="text-[11px] text-blue-400 font-medium mb-0.5">Preț de bază</p>
+                                <p className="text-base font-black text-blue-700">
+                                  {svc.base_price ? `${Number(svc.base_price).toLocaleString('ro-RO')} RON` : '—'}
+                                </p>
+                              </div>
+                              <div className="bg-purple-50 rounded-xl p-3 text-center">
+                                <p className="text-[11px] text-purple-400 font-medium mb-0.5">Pe oră</p>
+                                <p className="text-base font-black text-purple-700">
+                                  {svc.price_per_hour ? `${Number(svc.price_per_hour).toLocaleString('ro-RO')} RON` : '—'}
+                                </p>
+                              </div>
                             </div>
+
+                            {/* stats row */}
+                            <div className="flex items-center gap-4 text-xs text-gray-500 mb-3 pb-3 border-b border-gray-100">
+                              <div className="flex items-center gap-1">
+                                <Briefcase className="w-3.5 h-3.5 text-gray-400"/>
+                                <span><strong className="text-gray-700">{svc.times_booked ?? 0}</strong> rezervări</span>
+                              </div>
+                              {svc.estimated_duration&&(
+                                <div className="flex items-center gap-1">
+                                  <Clock className="w-3.5 h-3.5 text-gray-400"/>
+                                  <span>{svc.estimated_duration}</span>
+                                </div>
+                              )}
+                              {svc.is_popular&&(
+                                <span className="ml-auto px-2 py-0.5 bg-yellow-50 text-yellow-600 font-semibold rounded-full border border-yellow-100 text-[10px]">
+                                  🔥 Popular
+                                </span>
+                              )}
+                            </div>
+
+                            {/* keywords/tags */}
+                            {Array.isArray(svc.keywords)&&svc.keywords.length>0&&(
+                              <div className="flex flex-wrap gap-1.5">
+                                {svc.keywords.slice(0,5).map(tag=>(
+                                  <span key={tag} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-md font-medium">
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
+                      ))}
+                    </div>
+                  )
+                )}
+
+                {/* RECENZII */}
+                {activeTab==='recenzii'&&(
+                  <div>
+                    <div className="flex items-center gap-6 p-5 bg-yellow-50 rounded-xl border border-yellow-100 mb-5">
+                      <div className="text-center flex-shrink-0">
+                        <p className="text-5xl font-black text-gray-800">{ratingAvg>0?Number(ratingAvg).toFixed(1):'—'}</p>
+                        <StarRow rating={ratingAvg} size="md"/>
+                        <p className="text-xs text-gray-400 mt-1">{reviews.length} recenzii</p>
                       </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Reviews */}
-                {activeTab === 'reviews' && (
-                <div>
-                    {/* Rating Summary */}
-                    <div className="flex items-start gap-8 mb-8 pb-8 border-b border-gray-100">
-                    <div className="text-center">
-                        <p className="text-5xl font-bold text-gray-800">{handyman.rating}</p>
-                        <div className="flex items-center gap-0.5 mt-2 justify-center">
-                        {[...Array(5)].map((_, i) => (
-                            <Star key={i} className={`w-5 h-5 ${i < Math.round(handyman.rating) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-200'}`} />
-                        ))}
-                        </div>
-                        <p className="text-sm text-gray-500 mt-1">{handyman.reviews} recenzii</p>
-                    </div>
-
-                    <div className="flex-1 space-y-2">
-                        {[5, 4, 3, 2, 1].map((stars) => {
-                        const count = handyman.reviewsList.filter(r => r.rating === stars).length
-                        const percentage = handyman.reviewsList.length > 0 ? (count / handyman.reviewsList.length) * 100 : 0
-                        return (
-                            <div key={stars} className="flex items-center gap-3">
-                            <span className="text-sm text-gray-500 w-8">{stars} ★</span>
-                            <div className="flex-1 bg-gray-100 rounded-full h-2.5">
-                                <div
-                                className="bg-yellow-400 h-2.5 rounded-full transition-all"
-                                style={{ width: `${percentage}%` }}
-                                />
+                      <div className="flex-1 space-y-1.5">
+                        {[5,4,3,2,1].map(s=>{
+                          const cnt=reviews.filter(r=>r.rating===s).length
+                          const pct=reviews.length?(cnt/reviews.length)*100:0
+                          return (
+                            <div key={s} className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500 w-6">{s}★</span>
+                              <div className="flex-1 bg-white rounded-full h-2">
+                                <div className="bg-yellow-400 h-2 rounded-full" style={{width:`${pct}%`}}/>
+                              </div>
+                              <span className="text-xs text-gray-400 w-4 text-right">{cnt}</span>
                             </div>
-                            <span className="text-sm text-gray-500 w-6 text-right">{count}</span>
-                            </div>
-                        )
+                          )
                         })}
+                      </div>
                     </div>
-                    </div>
-
-                    {/* Reviews List */}
-                    <div className="space-y-6">
-                    {handyman.reviewsList.map((review, i) => (
-                        <div key={i} className="border border-gray-100 rounded-xl p-5">
-                        {/* Review Header */}
-                        <div className="flex items-start justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center text-gray-600 font-bold text-sm">
-                                {review.name.split(' ').map(n => n[0]).join('')}
-                            </div>
-                            <div>
-                                <p className="font-medium text-gray-800">{review.name}</p>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                <div className="flex items-center gap-0.5">
-                                    {[...Array(5)].map((_, j) => (
-                                    <Star key={j} className={`w-3.5 h-3.5 ${j < review.rating ? 'fill-yellow-400 text-yellow-400' : 'text-gray-200'}`} />
-                                    ))}
+                    {reviews.length===0
+                      ? <p className="text-center text-sm text-gray-400 py-8">Nicio recenzie încă</p>
+                      : <div className="space-y-4">
+                          {reviews.map(rev=>{
+                            const rName=rev.reviewer?`${rev.reviewer.first_name??''} ${rev.reviewer.last_name??''}`.trim()||'Anonim':'Anonim'
+                            const rDate=rev.created_at?new Date(rev.created_at).toLocaleDateString('ro-RO',{day:'2-digit',month:'short',year:'numeric'}):''
+                            return (
+                              <div key={rev.id} className="border border-gray-100 rounded-xl p-4">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold">
+                                    {rName.split(' ').slice(0,2).map(n=>n[0]).join('')}
+                                  </div>
+                                  <div>
+                                    <p className="text-sm font-semibold text-gray-800">{rName}</p>
+                                    <div className="flex items-center gap-1.5"><StarRow rating={rev.rating}/><span className="text-xs text-gray-400">{rDate}</span></div>
+                                  </div>
                                 </div>
-                                <span className="text-xs text-gray-400">{review.date}</span>
-                                </div>
-                            </div>
-                            </div>
-                            {review.service && (
-                            <span className="px-2.5 py-1 bg-blue-50 text-blue-600 text-xs rounded-lg font-medium">
-                                {review.service}
-                            </span>
-                            )}
+                                {rev.title&&<p className="text-xs font-bold text-gray-700 mb-1">{rev.title}</p>}
+                                {rev.description&&<p className="text-xs text-gray-500 leading-relaxed">{rev.description}</p>}
+                              </div>
+                            )
+                          })}
                         </div>
-
-                        {/* Review Text */}
-                        <p className="text-sm text-gray-600 leading-relaxed mb-4">{review.text}</p>
-
-                        {/* Reply */}
-                        {review.reply && (
-                            <div className="bg-gray-50 rounded-lg p-4 mb-4 ml-6 border-l-2 border-blue-400">
-                            <div className="flex items-center gap-2 mb-2">
-                                <div className="w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-xs">
-                                {initials}
-                                </div>
-                                <span className="text-sm font-medium text-gray-800">{handyman.name}</span>
-                            </div>
-                            <p className="text-sm text-gray-500">{review.reply}</p>
-                            </div>
-                        )}
-
-                        {/* Actions */}
-                        <div className="flex items-center gap-4 text-xs text-gray-400">
-                            <button className="flex items-center gap-1 hover:text-blue-600 transition">
-                            <Heart className="w-3.5 h-3.5" />
-                            <span>Util ({review.helpful})</span>
-                            </button>
-                            <button className="hover:text-red-500 transition">Raportează</button>
-                        </div>
-                        </div>
-                    ))}
-                    </div>
-                </div>
+                    }
+                  </div>
                 )}
 
-                {/* About */}
-                {activeTab === 'about' && (
-                    <div className="space-y-8">
-                        {/* Bio */}
-                        <div>
-                        <h4 className="text-lg font-bold text-gray-800 mb-3">Despre {handyman.name}</h4>
-                        <p className="text-gray-600 leading-relaxed">{handyman.bio}</p>
-                        </div>
-
-                        {/* Certifications + Service Area */}
-                        <div className="grid md:grid-cols-2 gap-4">
-                        {/* Certifications */}
-                        <div className="bg-gray-50 rounded-xl p-6">
-                            <h4 className="font-bold text-gray-800 mb-4">Certificări & Licențe</h4>
-                            <div className="space-y-4">
-                            {(handyman.certifications || []).map((cert, i) => (
-                                <div key={i} className="flex items-start gap-3">
-                                <cert.icon className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                                <div>
-                                    <p className="font-medium text-gray-800 text-sm">{cert.title}</p>
-                                    <p className="text-xs text-gray-500">{cert.desc}</p>
-                                </div>
-                                </div>
-                            ))}
-                            </div>
-                        </div>
-
-                        {/* Service Area */}
-                        <div className="bg-gray-50 rounded-xl p-6">
-                            <h4 className="font-bold text-gray-800 mb-4">Zonă de Acoperire</h4>
-                            <div className="space-y-4">
-                            <div className="flex items-start gap-3">
-                                <MapPin className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                                <div>
-                                <p className="font-medium text-gray-800 text-sm">Locație principală</p>
-                                <p className="text-xs text-gray-500">{handyman.serviceArea?.location || handyman.address}</p>
-                                </div>
-                            </div>
-                            <div className="flex items-start gap-3">
-                                <Target className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                                <div>
-                                <p className="font-medium text-gray-800 text-sm">Rază de deservire</p>
-                                <p className="text-xs text-gray-500">În limita a {handyman.serviceArea?.radius || '15 km'}</p>
-                                </div>
-                            </div>
-                            </div>
-                        </div>
-                        </div>
-
-                        {/* Services Provided */}
-                        <div>
-                        <h4 className="text-lg font-bold text-gray-800 mb-4">Servicii Oferite</h4>
-                        <div className="grid md:grid-cols-2 gap-4">
-                            {(handyman.servicesProvided || []).map((service, i) => (
-                            <div key={i} className="border border-gray-100 rounded-xl p-5 hover:shadow-md transition">
-                                <h5 className="font-bold text-gray-800 mb-1">{service.title}</h5>
-                                <p className="text-sm text-gray-500 mb-4">{service.desc}</p>
-
-                                <div className="grid grid-cols-2 gap-y-3 mb-4 pb-4 border-b border-gray-100">
-                                <div>
-                                    <p className="text-xs text-gray-400">Preț de bază</p>
-                                    <p className="font-bold text-gray-800">{service.basePrice}</p>
-                                </div>
-                                <div>
-                                    <p className="text-xs text-gray-400">Pe oră</p>
-                                    <p className="font-bold text-gray-800">{service.perHour}</p>
-                                </div>
-                                <div>
-                                    <p className="text-xs text-gray-400">Venit total</p>
-                                    <p className="font-bold text-blue-600">{service.totalRevenue}</p>
-                                </div>
-                                <div>
-                                    <p className="text-xs text-gray-400">Ultima rezervare</p>
-                                    <p className="font-medium text-gray-800">{service.lastBooking}</p>
-                                </div>
-                                </div>
-
-                                <div className="flex items-center gap-3 text-xs text-gray-500 mb-3">
-                                <div className="flex items-center gap-1">
-                                    <Briefcase className="w-3 h-3" />
-                                    <span>{service.bookings} rezervări</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    <span>{service.duration}</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                    <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                                    <span className="font-medium">{service.rating}</span>
-                                </div>
-                                </div>
-
-                                <div className="flex flex-wrap gap-1.5">
-                                {service.tags.map((tag) => (
-                                    <span key={tag} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-md font-medium">
-                                    {tag}
-                                    </span>
-                                ))}
-                                </div>
-                            </div>
-                            ))}
-                        </div>
-                        </div>
+                {/* DISPONIBILITATE */}
+                {activeTab==='disponibilitate'&&(
+                  <div>
+                    <p className="text-sm font-bold text-gray-700 mb-3">Zile de lucru</p>
+                    <div className="space-y-2">
+                      {Object.entries(DAYS_LABEL).map(([key, label])=>{
+                        const act = availDays.includes(key)
+                        return (
+                          <div key={key} className={`flex items-center justify-between px-4 py-2.5 rounded-xl ${act?'bg-blue-50 border border-blue-100':'bg-gray-50 border border-gray-100'}`}>
+                            <span className={`text-sm font-medium ${act?'text-blue-700':'text-gray-400'}`}>{label}</span>
+                            {act
+                              ? <span className="text-xs text-blue-600 font-semibold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5"/>Disponibil</span>
+                              : <span className="text-xs text-gray-400">Indisponibil</span>
+                            }
+                          </div>
+                        )
+                      })}
                     </div>
+                    {availDays.length===0&&<p className="text-sm text-gray-400 italic text-center py-6">Program nespecificat de handyman</p>}
+                  </div>
                 )}
 
-                {/* Availability */}
-                {activeTab === 'availability' && (
-                <div className="space-y-6">
-                    {/* Schedule + Response Time */}
-                    <div className="bg-gray-50 rounded-xl p-6">
-                    <h4 className="font-bold text-gray-800 mb-5">Disponibilitate</h4>
-                    <div className="grid md:grid-cols-2 gap-8">
-                        {/* Typical Schedule */}
-                        <div>
-                        <h5 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Program tipic</h5>
-                        <div className="space-y-2.5">
-                            <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-gray-800">Luni - Vineri</span>
-                            <span className="text-sm text-gray-600">08:00 - 18:00</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-gray-800">Sâmbătă</span>
-                            <span className="text-sm text-gray-600">09:00 - 16:00</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium text-gray-800">Duminică</span>
-                            <span className="text-sm text-gray-500 italic">Doar urgențe</span>
-                            </div>
-                        </div>
-                        </div>
-
-                        {/* Response Time */}
-                        <div>
-                        <h5 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Timp de răspuns</h5>
-                        <div className="space-y-2.5">
-                            <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-green-500 rounded-full" />
-                            <span className="text-sm text-gray-600">Răspunde de obicei în {handyman.responseTime}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-blue-500 rounded-full" />
-                            <span className="text-sm text-gray-600">Disponibil pentru apeluri de urgență</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 bg-red-500 rounded-full" />
-                            <span className="text-sm text-gray-600">Rezervări cu 2-3 săptămâni în avans</span>
-                            </div>
-                        </div>
-                        </div>
+                {/* DESPRE */}
+                {activeTab==='despre'&&(
+                  <div className="space-y-5">
+                    {handyman?.bio&&(
+                      <div>
+                        <p className="text-sm font-bold text-gray-700 mb-2">Despre {fullName}</p>
+                        <p className="text-sm text-gray-600 leading-relaxed">{handyman.bio}</p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-sm font-bold text-gray-700 mb-3">Încredere & Siguranță</p>
+                      <div className="grid grid-cols-3 gap-3">
+                        {[
+                          { cond:handyman?.is_verified,             icon:CheckCircle, label:'Identitate verificată', color:'text-blue-600 bg-blue-50 border-blue-100' },
+                          { cond:handyman?.has_insurance,           icon:Shield,      label:'Asigurat',              color:'text-green-600 bg-green-50 border-green-100' },
+                          { cond:handyman?.background_check_consent,icon:Award,       label:'Background verificat',  color:'text-purple-600 bg-purple-50 border-purple-100' },
+                        ].map((b,i)=>(
+                          <div key={i} className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-center ${b.cond?b.color:'text-gray-300 bg-gray-50 border-gray-100'}`}>
+                            <b.icon className="w-5 h-5"/>
+                            <p className="text-xs font-semibold leading-tight">{b.label}</p>
+                            <p className="text-[10px]">{b.cond?'✓ Confirmat':'Neprecizat'}</p>
+                          </div>
+                        ))}
+                      </div>
                     </div>
+                    {handyman?.certifications&&(
+                      <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Certificări & Licențe</p>
+                        <p className="text-sm text-gray-700">{handyman.certifications}</p>
+                      </div>
+                    )}
+                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Zonă de acoperire</p>
+                      <div className="space-y-2 text-sm text-gray-600">
+                        <div className="flex items-center gap-2"><MapPin className="w-4 h-4 text-blue-500"/>Locație: <strong>{location}</strong></div>
+                        {handyman?.work_radius_km&&<div className="flex items-center gap-2"><Globe className="w-4 h-4 text-blue-500"/>Rază: <strong>{handyman.work_radius_km} km</strong></div>}
+                      </div>
                     </div>
-
-                    {/* Current Booking Status */}
-                    <div className="bg-gray-50 rounded-xl p-6">
-                    <h4 className="font-bold text-gray-800 mb-4">Status Curent Rezervări</h4>
-                    <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-                        <div className="flex items-center gap-2 mb-1">
-                        <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" />
-                        <span className="font-semibold text-green-700">Disponibil</span>
-                        </div>
-                        <p className="text-sm text-green-600">
-                        Acceptă rezervări noi. Următorul slot disponibil: <span className="font-medium">Mâine</span>
-                        </p>
-                    </div>
-                    </div>
-                </div>
-            )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Sidebar */}
+          {/* ═══ SIDEBAR ═══ */}
           <div className="space-y-4">
-            {/* Booking Card */}
-            <div className="bg-white rounded-xl border border-gray-100 p-6 sticky top-20">
-              <p className="text-sm text-gray-500 text-center mb-1">Tarif de la</p>
-              <p className="text-3xl font-bold text-gray-800 text-center mb-6">{handyman.rate}</p>
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 sticky top-20">
+              {handyman?.hourly_rate&&(
+                <>
+                  <p className="text-xs text-gray-400 text-center mb-1">Tarif de la</p>
+                  <p className="text-3xl font-black text-gray-800 text-center mb-5">
+                    {Number(handyman.hourly_rate)} <span className="text-base font-normal text-gray-400">RON/h</span>
+                  </p>
+                </>
+              )}
 
-              <button
-                onClick={() => navigate(`/book/${slug}`)}
-                className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition mb-3"
-                >
-                <Calendar className="w-5 h-5" />
-                Rezervă acum
+              <button onClick={()=>navigate(`/book/${slug}`)}
+                className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-blue-700 transition mb-2">
+                <Calendar className="w-4 h-4"/> Rezervă acum
               </button>
-              <button className="w-full flex items-center justify-center gap-2 border border-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-50 transition">
-                <MessageSquare className="w-5 h-5" />
-                Trimite mesaj
+              <button className="w-full flex items-center justify-center gap-2 border border-gray-200 text-gray-600 py-3 rounded-xl font-medium text-sm hover:bg-gray-50 transition">
+                <MessageSquare className="w-4 h-4"/> Trimite mesaj
               </button>
 
-              <div className="mt-6 space-y-3 text-sm">
-                <div className="flex items-center justify-between text-gray-600">
-                  <span>Timp răspuns:</span>
-                  <span className="font-medium">{handyman.responseTime}</span>
+              <div className="mt-5 pt-4 border-t border-gray-100 space-y-2.5 text-sm text-gray-600">
+                <div className="flex justify-between">
+                  <span>Lucrări finalizate</span>
+                  <span className="font-semibold text-gray-800">{handyman?.total_jobs_completed??0}</span>
                 </div>
-                <div className="flex items-center justify-between text-gray-600">
-                  <span>Lucrări finalizate:</span>
-                  <span className="font-medium">{handyman.jobsCompleted}</span>
+                <div className="flex justify-between">
+                  <span>Rating mediu</span>
+                  <span className="font-semibold text-gray-800">{ratingAvg>0?Number(ratingAvg).toFixed(1):'—'}</span>
                 </div>
-                <div className="flex items-center justify-between text-gray-600">
-                  <span>Membru din:</span>
-                  <span className="font-medium">{handyman.joinedDate}</span>
-                </div>
-              </div>
-
-              <div className="border-t border-gray-100 mt-5 pt-4 space-y-2">
-                {handyman.phoneSupport && (
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Phone className="w-4 h-4 text-green-500" />
-                    <span>Suport telefonic disponibil</span>
-                  </div>
-                )}
-                {handyman.messageGuarantee && (
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <MessageSquare className="w-4 h-4 text-blue-500" />
-                    <span>Răspuns la mesaje garantat</span>
+                {handyman?.experience_years&&(
+                  <div className="flex justify-between">
+                    <span>Experiență</span>
+                    <span className="font-semibold text-gray-800">{handyman.experience_years} ani</span>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Trust & Safety */}
-            <div className="bg-white rounded-xl border border-gray-100 p-6">
-              <h3 className="font-bold text-gray-800 mb-4">Încredere & Siguranță</h3>
-              <div className="space-y-3">
-                {handyman.trust.backgroundVerified && (
-                  <div className="flex items-center gap-3 text-sm">
-                    <Shield className="w-5 h-5 text-green-500" />
-                    <span className="text-gray-600">Verificare background</span>
+            {/* trust */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <h3 className="font-bold text-gray-800 text-sm mb-3">Încredere & Siguranță</h3>
+              <div className="space-y-2.5">
+                {[
+                  { cond:handyman?.is_verified,             icon:CheckCircle, label:'Verificare identitate', color:'text-blue-500' },
+                  { cond:handyman?.has_insurance,           icon:Shield,      label:'Asigurare de răspundere', color:'text-green-500' },
+                  { cond:handyman?.background_check_consent,icon:Award,       label:'Background verificat',   color:'text-purple-500' },
+                ].map((b,i)=>(
+                  <div key={i} className={`flex items-center gap-2.5 text-sm ${b.cond?'text-gray-700':'text-gray-300'}`}>
+                    <b.icon className={`w-4 h-4 ${b.cond?b.color:'text-gray-300'}`}/>
+                    {b.label}
                   </div>
-                )}
-                {handyman.trust.identityConfirmed && (
-                  <div className="flex items-center gap-3 text-sm">
-                    <CheckCircle className="w-5 h-5 text-green-500" />
-                    <span className="text-gray-600">Identitate confirmată</span>
-                  </div>
-                )}
-                {handyman.trust.licensedInsured && (
-                  <div className="flex items-center gap-3 text-sm">
-                    <Award className="w-5 h-5 text-green-500" />
-                    <span className="text-gray-600">Licențiat & Asigurat</span>
-                  </div>
-                )}
+                ))}
               </div>
             </div>
           </div>
+
         </div>
       </div>
     </div>
