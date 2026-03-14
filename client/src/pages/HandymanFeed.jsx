@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabase'
 import HandymanNavbar from '../components/handyman-dashboard/HandymanNavbar'
+import TaskDetailModal from '../components/handyman-dashboard/TaskDetailModal'
+import TaskRequestModal from '../components/handyman-dashboard/TaskRequestModal'
 import TaskPhoto from '../components/TaskPhoto'
 import CityAutocomplete from '../components/CityAutocomplete'
 import { updateHandymanWorkZone } from '../utils/cityLookup'
@@ -27,9 +29,13 @@ export default function HandymanFeed() {
   const [zoneFilter, setZoneFilter] = useState('all')
   const [sortBy, setSortBy] = useState('relevance')
 
+  // Detail modal
+  const [detailTaskId, setDetailTaskId] = useState(null)
+  
   // Offer modal
   const [selectedTask, setSelectedTask] = useState(null)
   const [showOfferModal, setShowOfferModal] = useState(false)
+  const [requestMode, setRequestMode] = useState('negotiate')
   const [offerForm, setOfferForm] = useState({
     proposed_price: '',
     estimated_duration: '',
@@ -83,7 +89,7 @@ export default function HandymanFeed() {
     setHandymanProfile(hp)
 
     // Dacă nu are zona setată → arată popup
-    if (!hp?.feed_setup_compleded) {
+    if (!hp?.feed_setup_completed) {
       setZoneForm({
         city: hp?.primary_city || profile?.city || '',
         county: hp?.primary_county || profile?.county || '',
@@ -118,6 +124,37 @@ export default function HandymanFeed() {
       handyman_extended: hp.extended_radius_km || 10,
     })
 
+    // Fallback: taskuri din același oraș/județ (conform coloanelor address_city/address_county)
+    const hasCity = !!hp?.primary_city
+    const hasCounty = !!hp?.primary_county
+    let sameAreaTasks = []
+
+    if (hasCity && hasCounty) {
+      const { data: cityTasks } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          category:category_id (name),
+          client:client_id (first_name, last_name, avatar_url, latitude, longitude)
+        `)
+        .eq('status', 'pending')
+        .eq('is_public', true)
+        .ilike('address_city', hp.primary_city)
+        .ilike('address_county', hp.primary_county)
+
+      sameAreaTasks = (cityTasks || []).map(t => ({
+        ...t,
+        category_name: t.category?.name,
+        client_name: `${t.client?.first_name || ''} ${t.client?.last_name || ''}`.trim(),
+        client_avatar: t.client?.avatar_url,
+        city: t.address_city || t.city,
+        distance_km: null,
+        is_in_main_zone: true,
+        is_proposed: false,
+        offer_count: 0,
+      }))
+    }
+
     // Taskuri propuse direct
     const { data: proposedTasks } = await supabase
       .from('tasks')
@@ -132,6 +169,13 @@ export default function HandymanFeed() {
     // Combinăm și deduplicăm
     const allTasks = [...(nearbyTasks || [])]
     const nearbyIds = new Set(allTasks.map(t => t.id))
+
+    sameAreaTasks.forEach(t => {
+      if (!nearbyIds.has(t.id)) {
+        allTasks.push(t)
+        nearbyIds.add(t.id)
+      }
+    })
 
     if (proposedTasks) {
       proposedTasks.forEach(t => {
@@ -522,7 +566,11 @@ export default function HandymanFeed() {
               const UrgencyIcon = urgency.icon
 
               return (
-                <div key={task.id} className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition overflow-hidden">
+                <div
+                  key={task.id}
+                  onClick={() => setDetailTaskId(task.id)}
+                  className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition overflow-hidden cursor-pointer"
+                >
                   <div className={`h-1 ${task.is_proposed ? 'bg-purple-500' : task.is_in_main_zone ? 'bg-green-500' : 'bg-yellow-400'}`} />
 
                   <div className="p-5">
@@ -605,14 +653,27 @@ export default function HandymanFeed() {
                             <button
                               onClick={() => {
                                 setSelectedTask(task)
+                                setRequestMode('negotiate')
                                 setOfferForm(prev => ({ ...prev, proposed_price: task.budget || '' }))
                                 setShowOfferModal(true)
                               }}
                               className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition"
                             >
-                              <Send className="w-3.5 h-3.5" /> Trimite Ofertă
+                              <Send className="w-3.5 h-3.5" /> Negociază
                             </button>
-                            <button className="w-9 h-9 border border-gray-200 rounded-lg flex items-center justify-center hover:bg-gray-50 transition">
+                            <button
+                              onClick={() => {
+                                setSelectedTask(task)
+                                setRequestMode('message')
+                                setOfferForm(prev => ({
+                                  ...prev,
+                                  proposed_price: prev.proposed_price || task.budget || '',
+                                  message: `Salut! Sunt interesat de taskul „${task.title}". Putem discuta detaliile?`,
+                                }))
+                                setShowOfferModal(true)
+                              }}
+                              className="w-9 h-9 border border-gray-200 rounded-lg flex items-center justify-center hover:bg-gray-50 transition"
+                            >
                               <MessageSquare className="w-4 h-4 text-gray-400" />
                             </button>
                           </>
@@ -861,117 +922,37 @@ export default function HandymanFeed() {
         </div>
       )}
 
-      {/* ═══════════════════════════════════════════════════
-          MODAL: Trimite Ofertă
-          ═══════════════════════════════════════════════════ */}
-      {showOfferModal && selectedTask && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4" onClick={() => setShowOfferModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <div>
-                <h3 className="text-lg font-bold text-gray-800">Trimite Ofertă</h3>
-                <p className="text-sm text-gray-500">{selectedTask.title}</p>
-              </div>
-              <button onClick={() => setShowOfferModal(false)} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
-                <X className="w-5 h-5 text-gray-400" />
-              </button>
-            </div>
+      <TaskDetailModal
+        taskId={detailTaskId}
+        onClose={() => setDetailTaskId(null)}
+        onNegotiate={(task) => {
+          setSelectedTask(task)
+          setRequestMode('negotiate')
+          setOfferForm(prev => ({ ...prev, proposed_price: task.budget || '' }))
+          setShowOfferModal(true)
+        }}
+        onMessage={(task) => {
+          setSelectedTask(task)
+          setRequestMode('message')
+          setOfferForm(prev => ({
+            ...prev,
+            proposed_price: prev.proposed_price || task.budget || '',
+            message: `Salut! Sunt interesat de taskul „${task.title}". Putem discuta detaliile?`,
+          }))
+          setShowOfferModal(true)
+        }}
+      />
 
-            <div className="p-6 space-y-4">
-              <div className="bg-gray-50 rounded-xl p-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <TaskPhoto photos={selectedTask.photos} category={selectedTask.category_name} className="w-10 h-10 flex-shrink-0" />
-                  <div>
-                    <p className="font-medium text-gray-800 text-sm">{selectedTask.title}</p>
-                    <p className="text-xs text-gray-500">{selectedTask.client_name} • {selectedTask.city}</p>
-                  </div>
-                </div>
-                {selectedTask.budget && (
-                  <p className="text-sm text-gray-600">Buget client: <strong>{Number(selectedTask.budget).toLocaleString('ro-RO')} RON</strong></p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-gray-800 mb-2">Prețul tău (RON) *</label>
-                <div className="relative">
-                  <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input
-                    type="number"
-                    value={offerForm.proposed_price}
-                    onChange={(e) => setOfferForm(prev => ({ ...prev, proposed_price: e.target.value }))}
-                    placeholder="Ex: 250"
-                    className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-gray-800 mb-2">Durată estimată</label>
-                <input
-                  type="text"
-                  value={offerForm.estimated_duration}
-                  onChange={(e) => setOfferForm(prev => ({ ...prev, estimated_duration: e.target.value }))}
-                  placeholder="Ex: 2-3 ore, 1 zi"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-bold text-gray-800 mb-2">Disponibil pe</label>
-                  <input
-                    type="date"
-                    value={offerForm.available_date}
-                    onChange={(e) => setOfferForm(prev => ({ ...prev, available_date: e.target.value }))}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-gray-800 mb-2">Ora</label>
-                  <select
-                    value={offerForm.available_time}
-                    onChange={(e) => setOfferForm(prev => ({ ...prev, available_time: e.target.value }))}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Selectează</option>
-                    {['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'].map(t => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-gray-800 mb-2">Mesaj pentru client</label>
-                <textarea
-                  value={offerForm.message}
-                  onChange={(e) => setOfferForm(prev => ({ ...prev, message: e.target.value }))}
-                  placeholder="Prezintă-te și descrie cum ai aborda lucrarea..."
-                  rows={3}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
-              <button
-                onClick={() => setShowOfferModal(false)}
-                className="px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
-              >
-                Anulează
-              </button>
-              <button
-                onClick={handleSendOffer}
-                disabled={!offerForm.proposed_price || sendingOffer}
-                className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50"
-              >
-                <Send className="w-4 h-4" />
-                {sendingOffer ? 'Se trimite...' : 'Trimite Oferta'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <TaskRequestModal
+        isOpen={showOfferModal}
+        task={selectedTask}
+        mode={requestMode}
+        onClose={() => setShowOfferModal(false)}
+        onSubmit={handleSendOffer}
+        form={offerForm}
+        setForm={setOfferForm}
+        sending={sendingOffer}
+      />
 
     </div>
   )
