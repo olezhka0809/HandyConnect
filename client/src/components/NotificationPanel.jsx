@@ -1,36 +1,72 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { X, Calendar, CheckCheck, Bell, MessageSquare, XCircle, Star, CreditCard, Clock, AlertTriangle, ThumbsUp } from 'lucide-react'
+import { X, Calendar, CheckCheck, Bell, MessageSquare, XCircle, Star, CreditCard, Clock, AlertTriangle, ThumbsUp, ShieldCheck, Award, Play, CalendarClock } from 'lucide-react'
 import { supabase } from '../supabase'
 
 const redirectMap = {
-  new_offer:          '/dashboard?tab=offers',
-  offer_counter:      '/handyman/jobs?tab=negotiations',
-  task_accepted:      '/handyman/jobs?tab=accepted',
-  cancellation:       '/handyman/jobs?tab=negotiations',
-  service_completed:  '/dashboard?tab=tasks&filter=completed',
-  reschedule_request: '/dashboard?tab=reschedule',
-  new_review:         '/handyman/reviews',
-  booking_confirmed:  '/dashboard?tab=bookings',
-  feedback_request:   '/dashboard?tab=tasks',
-  task_proposed:      '/handyman/jobs?tab=proposed',
+  new_offer:             '/dashboard?tab=offers',
+  offer_counter:         '/handyman/jobs?tab=negotiations',
+  task_accepted:         '/handyman/jobs?tab=accepted',
+  task_allocated:        '/dashboard?tab=tasks',
+  cancellation:          '/handyman/jobs?tab=negotiations',
+  task_started:          '/dashboard?tab=tasks',
+  service_completed:     '/dashboard?tab=tasks&filter=completed',
+  reschedule_request:    '/dashboard?tab=reschedule',
+  new_review:            '/handyman/reviews',
+  booking_confirmed:     '/dashboard?tab=bookings',
+  feedback_request:      '/dashboard?tab=tasks',
+  task_proposed:         '/handyman/jobs?tab=proposed',
+  // Dispute notifications → always disputes tab
+  dispute_created:       '/dashboard?tab=disputes',
+  dispute_update:        '/dashboard?tab=disputes',
+  rework_proposal:       '/dashboard?tab=disputes',
+  task_rejected:         '/handyman/jobs?tab=disputes',
+  // Rework scheduling proposals → client tasks/rework tab
+  rework_date_proposal:  '/dashboard?tab=tasks&filter=rework',
+  // Handyman ← admin decisions
+  verification_approved: '/handyman/personal-profile',
+  verification_rejected: '/handyman/personal-profile',
+  skill_approved:        '/handyman/personal-profile',
+  skill_rejected:        '/handyman/personal-profile',
+  profile_approved:      '/handyman/personal-profile',
+  profile_rejected:      '/handyman/personal-profile',
+  support_ticket_response: '/issues?tab=tickets',
+  support_ticket_new:      '/admin/dashboard?section=support',
 }
 
 const iconMap = {
-  booking_confirmed: { icon: CheckCheck, color: 'text-green-500', bg: 'bg-green-100' },
-  booking_reminder: { icon: Bell, color: 'text-blue-500', bg: 'bg-blue-100' },
-  booking_rescheduled:  { icon: Clock,     color: 'text-yellow-600', bg: 'bg-yellow-100' },
-  reschedule_request:   { icon: Clock,     color: 'text-blue-500',   bg: 'bg-blue-100' },
-  service_completed: { icon: CheckCheck, color: 'text-green-500', bg: 'bg-green-100' },
-  new_message: { icon: MessageSquare, color: 'text-purple-500', bg: 'bg-purple-100' },
-  cancellation: { icon: XCircle, color: 'text-red-500', bg: 'bg-red-100' },
-  feedback_request: { icon: Star, color: 'text-red-500', bg: 'bg-red-100' },
-  payment_processed: { icon: CreditCard, color: 'text-blue-600', bg: 'bg-blue-100' },
-  new_offer:     { icon: AlertTriangle, color: 'text-yellow-500', bg: 'bg-yellow-100' },
-  offer_counter: { icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-100' },
-  task_accepted: { icon: CheckCheck, color: 'text-green-500', bg: 'bg-green-100' },
-  new_task:      { icon: Bell,       color: 'text-blue-500',  bg: 'bg-blue-100' },
-  new_review:    { icon: Star,       color: 'text-yellow-500', bg: 'bg-yellow-100' },
+  booking_confirmed:     { icon: CheckCheck,   color: 'text-green-500',   bg: 'bg-green-100' },
+  booking_reminder:      { icon: Bell,         color: 'text-blue-500',    bg: 'bg-blue-100' },
+  booking_rescheduled:   { icon: Clock,        color: 'text-yellow-600',  bg: 'bg-yellow-100' },
+  reschedule_request:    { icon: Clock,        color: 'text-blue-500',    bg: 'bg-blue-100' },
+  task_started:          { icon: Play,          color: 'text-purple-600',  bg: 'bg-purple-100' },
+  service_completed:     { icon: CheckCheck,   color: 'text-green-500',   bg: 'bg-green-100' },
+  new_message:           { icon: MessageSquare,color: 'text-purple-500',  bg: 'bg-purple-100' },
+  cancellation:          { icon: XCircle,      color: 'text-red-500',     bg: 'bg-red-100' },
+  feedback_request:      { icon: Star,         color: 'text-red-500',     bg: 'bg-red-100' },
+  payment_processed:     { icon: CreditCard,   color: 'text-blue-600',    bg: 'bg-blue-100' },
+  new_offer:             { icon: AlertTriangle,color: 'text-yellow-500',  bg: 'bg-yellow-100' },
+  offer_counter:         { icon: AlertTriangle,color: 'text-orange-500',  bg: 'bg-orange-100' },
+  task_accepted:         { icon: CheckCheck,   color: 'text-green-500',   bg: 'bg-green-100' },
+  task_allocated:        { icon: CheckCheck,   color: 'text-blue-600',    bg: 'bg-blue-100' },
+  new_task:              { icon: Bell,         color: 'text-blue-500',    bg: 'bg-blue-100' },
+  new_review:            { icon: Star,         color: 'text-yellow-500',  bg: 'bg-yellow-100' },
+  task_rejected:         { icon: AlertTriangle,color: 'text-red-500',     bg: 'bg-red-100' },
+  // Dispute notifications
+  dispute_created:       { icon: AlertTriangle,color: 'text-red-500',     bg: 'bg-red-100' },
+  dispute_update:        { icon: AlertTriangle,color: 'text-orange-500',  bg: 'bg-orange-100' },
+  rework_proposal:       { icon: AlertTriangle,color: 'text-yellow-600',  bg: 'bg-yellow-100' },
+  // Rework scheduling
+  rework_date_proposal:  { icon: CalendarClock, color: 'text-orange-500', bg: 'bg-orange-100' },
+  // Handyman ← admin decisions
+  verification_approved: { icon: ShieldCheck,  color: 'text-green-600',   bg: 'bg-green-100' },
+  verification_rejected: { icon: XCircle,      color: 'text-red-500',     bg: 'bg-red-100' },
+  skill_approved:        { icon: Award,        color: 'text-blue-600',    bg: 'bg-blue-100' },
+  skill_rejected:        { icon: XCircle,      color: 'text-red-500',     bg: 'bg-red-100' },
+  profile_approved:         { icon: ShieldCheck,  color: 'text-green-600',  bg: 'bg-green-100' },
+  profile_rejected:         { icon: XCircle,      color: 'text-red-500',    bg: 'bg-red-100' },
+  support_ticket_response:  { icon: MessageSquare, color: 'text-blue-500',  bg: 'bg-blue-100' },
+  support_ticket_new:       { icon: AlertTriangle, color: 'text-orange-500', bg: 'bg-orange-100' },
 }
 
 const formatDateLabel = (dateStr) => {
@@ -50,8 +86,39 @@ export default function NotificationPanel({ isOpen, onClose }) {
   const navigate = useNavigate()
 
   const resolveNavigationTarget = (notif) => {
-    // Force smart routing for completion notifications based on job type.
+    // Handyman: accepted reschedule notifications should always open Job Pipeline → Reprogramate.
+    if (notif.type === 'task_accepted' && (notif.title || '').toLowerCase().includes('reprogramare accept')) {
+      return { path: '/handyman/jobs', state: { tab: 'reschedule' } }
+    }
+
+    // rework_date_proposal sent to handyman → reschedule tab; to client → tasks/rework
+    if (notif.type === 'rework_date_proposal') {
+      if (notif.data?.redirect?.includes('/handyman/jobs')) {
+        return { path: '/handyman/jobs', state: { tab: 'reschedule' } }
+      }
+      return { path: '/dashboard', state: { tab: 'tasks', filter: 'rework' } }
+    }
+
+    // Dispute notifications → disputes tab (client/admin → dashboard). For
+    // handymen prefer the Handyman Jobs disputes tab so clicking a dispute
+    // notification opens the pipeline directly.
+    if (['dispute_created', 'dispute_update', 'rework_proposal'].includes(notif.type)) {
+      if (notif.data?.for_handyman === true || notif.data?.redirect === '/handyman/jobs?tab=disputes') {
+        return { path: '/handyman/jobs', state: { tab: 'disputes' } }
+      }
+      return { path: '/dashboard', state: { tab: 'disputes' } }
+    }
+
+    // New offer → client sees it in offers/price subtab
+    if (notif.type === 'new_offer') {
+      return { path: '/dashboard', state: { tab: 'offers', offersSubtab: 'price' } }
+    }
+
+    // service_completed: rework completions → tasks/rework, others → bookings or tasks/completed
     if (notif.type === 'service_completed') {
+      if (notif.data?.is_rework) {
+        return { path: '/dashboard', state: { tab: 'tasks', filter: 'rework' } }
+      }
       const isBookingCompletion = notif.data?.job_type === 'booking' || !!notif.data?.booking_id
       if (isBookingCompletion) {
         return { path: '/dashboard', state: { tab: 'bookings', bookingFilter: 'completed' } }
@@ -64,15 +131,15 @@ export default function NotificationPanel({ isOpen, onClose }) {
 
     const [path, query] = rawPath.split('?')
     const params = new URLSearchParams(query || '')
-
-    return {
-      path,
-      state: {
-        tab: params.get('tab') || undefined,
-        filter: params.get('filter') || undefined,
-        bookingFilter: params.get('bookingFilter') || undefined,
-      },
+    const state = {
+      tab: params.get('tab') || undefined,
+      filter: params.get('filter') || undefined,
+      bookingFilter: params.get('bookingFilter') || undefined,
     }
+
+    // Pass the full URL (including query string) so the tab is encoded in the
+    // URL itself — this is reliable even when navigating to the same page.
+    return { path: rawPath, state }
   }
 
   const unreadCount = notifications.filter(n => !n.is_read).length

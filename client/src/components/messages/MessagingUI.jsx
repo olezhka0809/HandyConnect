@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, Fragment } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../supabase'
-import { Send, MessageSquare, Search, Check, CheckCheck, Smile, Paperclip, X, Play, Briefcase, Calendar, ChevronRight, Trash2, CheckCircle, Lock } from 'lucide-react'
+import { Send, MessageSquare, Search, Check, CheckCheck, Smile, Paperclip, X, Play, Briefcase, Calendar, ChevronRight, Trash2, CheckCircle, Lock, AlertTriangle, ShieldAlert, Pin, Users, Wrench, User } from 'lucide-react'
+
+// Admin's fixed user ID — used to identify admin-side of dispute conversations
+const ADMIN_ID = 'e7c2a8fa-c2ef-4486-8937-97807b6b04f5'
 
 const EMOJIS = [
   '😀','😃','😄','😁','😆','😅','🤣','😂','🙂','😉','😊','😇',
@@ -14,7 +17,39 @@ const EMOJIS = [
   '🌈','🚀','💡','🏆','🎯','🍕','🍔','🍰','☕','🌸','🌙','🌞',
 ]
 
-function JobPinCard({ conv, onTaskClick, onBookingClick }) {
+function JobPinCard({ conv, onTaskClick, onBookingClick, onDisputeClick }) {
+  // Dispute conversations take priority — show dispute card, not task card
+  if (conv?.conversation_type === 'dispute_admin' && conv?.dispute_id) {
+    const taskTitle = conv.task?.title ?? 'Dispută activă'
+    const isLv2 = conv.task?.is_rework === true && (conv.task?.rework_level ?? 1) >= 2
+    return (
+      <button
+        onClick={() => onDisputeClick?.({ disputeId: conv.dispute_id, taskId: conv.task_id })}
+        className={`flex items-center gap-3 px-5 py-2.5 border-b transition-colors w-full text-left group
+          ${isLv2
+            ? 'bg-orange-50 border-orange-100 hover:bg-orange-100'
+            : 'bg-red-50 border-red-100 hover:bg-red-100'}`}
+      >
+        <div className={`w-11 h-11 rounded-lg flex items-center justify-center flex-shrink-0 ${isLv2 ? 'bg-orange-100' : 'bg-red-100'}`}>
+          <ShieldAlert className={`w-5 h-5 ${isLv2 ? 'text-orange-500' : 'text-red-500'}`} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-gray-900 truncate">{taskTitle}</p>
+          <p className="text-xs mt-0.5 flex items-center gap-1.5">
+            <span className={`font-bold ${isLv2 ? 'text-orange-600' : 'text-red-600'}`}>
+              {isLv2 ? 'Dispută Nivel 2' : 'Dispută activă'}
+            </span>
+            {isLv2 && (
+              <span className="px-1.5 py-0.5 bg-orange-200 text-orange-800 text-[10px] font-bold rounded">
+                Relucrare
+              </span>
+            )}
+          </p>
+        </div>
+        <ChevronRight className={`w-4 h-4 flex-shrink-0 transition-colors text-gray-400 ${isLv2 ? 'group-hover:text-orange-500' : 'group-hover:text-red-500'}`} />
+      </button>
+    )
+  }
   if (conv?.task) {
     const photo = Array.isArray(conv.task.photos) && conv.task.photos.length > 0 ? conv.task.photos[0] : null
     const priceVal = conv.task.final_price ?? conv.task.budget
@@ -103,7 +138,7 @@ function MessageTicks({ msg, userId }) {
   return <CheckCheck className="w-3.5 h-3.5 flex-shrink-0 text-white/50" />
 }
 
-export default function MessagingUI({ userId, userRole, initialBookingId, initialTaskId, backPath, onTaskClick, onBookingClick }) {
+export default function MessagingUI({ userId, userRole, initialBookingId, initialTaskId, backPath, onTaskClick, onBookingClick, onDisputeClick }) {
   const navigate = useNavigate()
   const [conversations, setConversations] = useState([])
   const [activeConvId, setActiveConvId] = useState(null)
@@ -115,6 +150,14 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
   const [attachmentFile, setAttachmentFile] = useState(null)
   const [attachmentPreview, setAttachmentPreview] = useState(null)
   const [uploading, setUploading] = useState(false)
+  const [adminPartyFilter, setAdminPartyFilter] = useState('all') // 'all' | 'clients' | 'handymen'
+  const [typeFilter, setTypeFilter] = useState('all') // 'all' | 'task' | 'booking' | 'dispute'
+  const [pinnedIds, setPinnedIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(`pinned_convs_${userId}`) || '[]')) }
+    catch { return new Set() }
+  })
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [contextMenu, setContextMenu] = useState(null) // { convId, x, y }
   const messagesEndRef = useRef(null)
   const fileInputRef = useRef(null)
   const autoSelectedRef = useRef(false)
@@ -153,16 +196,28 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
     return () => document.removeEventListener('mousedown', handle)
   }, [])
 
+  // Închide context menu la orice click sau scroll
+  useEffect(() => {
+    if (!contextMenu) return
+    const close = () => setContextMenu(null)
+    document.addEventListener('mousedown', close)
+    document.addEventListener('scroll', close, true)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('scroll', close, true)
+    }
+  }, [contextMenu])
+
   const loadConversations = async () => {
     const { data: convs } = await supabase
       .from('conversations')
       .select(`
         id, client_id, handyman_id, last_message_at, created_at,
-        booking_id, task_id, is_closed,
+        booking_id, task_id, is_closed, dispute_id, conversation_type,
         client:profiles!conversations_client_id_fkey(id, first_name, last_name, avatar_url),
         handyman:profiles!conversations_handyman_id_fkey(id, first_name, last_name, avatar_url),
         booking:bookings!conversations_booking_id_fkey(id, status, scheduled_date, total, handyman_services(title)),
-        task:tasks!conversations_task_id_fkey(id, title, photos, budget, final_price, status, urgency)
+        task:tasks!conversations_task_id_fkey(id, title, photos, budget, final_price, status, urgency, is_rework, rework_level)
       `)
       .or(`client_id.eq.${userId},handyman_id.eq.${userId}`)
       .order('last_message_at', { ascending: false, nullsFirst: false })
@@ -174,8 +229,10 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
     }
 
     // Deduplicate: keep only the most recent conversation per task/booking
+    // dispute_admin convs are never deduplicated — multiple per task is intentional
     const seen = new Set()
     const deduped = convs.filter(c => {
+      if (c.conversation_type === 'dispute_admin') return true
       const key = c.task_id ? `t-${c.task_id}` : c.booking_id ? `b-${c.booking_id}` : `d-${c.id}`
       if (seen.has(key)) return false
       seen.add(key)
@@ -209,7 +266,7 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
   const loadMessages = async (convId) => {
     const { data } = await supabase
       .from('messages')
-      .select('id, content, sender_id, is_read, created_at, attachment_url, attachment_type')
+      .select('id, content, sender_id, is_read, created_at, attachment_url, attachment_type, is_system')
       .eq('conversation_id', convId)
       .order('created_at', { ascending: true })
     setMessages(data || [])
@@ -306,7 +363,7 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
         if (convId && notifConvId && convId === notifConvId) {
           const { data: newMsgs } = await supabase
             .from('messages')
-            .select('id, content, sender_id, is_read, created_at, attachment_url, attachment_type')
+            .select('id, content, sender_id, is_read, created_at, attachment_url, attachment_type, is_system')
             .eq('conversation_id', convId)
             .order('created_at', { ascending: false })
             .limit(5)
@@ -324,10 +381,12 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
       })
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'conversations',
-        filter: `${userRole === 'handyman' ? 'handyman_id' : 'client_id'}=eq.${userId}`,
-      }, () => {
-        loadConversations()
-      })
+        filter: `client_id=eq.${userId}`,
+      }, () => { loadConversations() })
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'conversations',
+        filter: `handyman_id=eq.${userId}`,
+      }, () => { loadConversations() })
       .on('postgres_changes', {
         event: 'UPDATE', schema: 'public', table: 'conversations',
       }, () => {
@@ -408,17 +467,24 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
 
     const conv = conversations.find(c => c.id === activeConvId)
     if (conv) {
-      const isRecipientClient = conv.handyman_id === userId
-      const recipientId = isRecipientClient ? conv.client_id : conv.handyman_id
+      const recipientId = userId === conv.client_id ? conv.handyman_id : conv.client_id
       const notifBody = attachment_url
         ? (isVideo ? '🎥 Video' : '📷 Imagine')
         : (content.length > 60 ? content.substring(0, 60) + '...' : content)
+      let redirect = '/messages'
+      if (conv.conversation_type === 'dispute_admin') {
+        if (recipientId === ADMIN_ID) redirect = '/admin/dashboard?section=messages'
+        else if (recipientId === conv.handyman_id) redirect = '/handyman/messages'
+        else redirect = '/messages'
+      } else {
+        redirect = userId === conv.handyman_id ? '/messages' : '/handyman/messages'
+      }
       await supabase.from('notifications').insert({
         user_id: recipientId,
         type: 'new_message',
-        title: 'Mesaj nou',
+        title: conv.conversation_type === 'dispute_admin' ? 'Mesaj dispută' : 'Mesaj nou',
         body: notifBody,
-        data: { conversation_id: activeConvId, redirect: isRecipientClient ? '/messages' : '/handyman/messages' },
+        data: { conversation_id: activeConvId, redirect },
       })
     }
   }
@@ -431,9 +497,44 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
     setConversations(prev => prev.filter(c => c.id !== convId))
   }
 
-  const getOtherParty = (conv) => conv.client_id === userId ? conv.handyman : conv.client
+  const handlePinToggle = (convId) => {
+    setPinnedIds(prev => {
+      const next = new Set(prev)
+      next.has(convId) ? next.delete(convId) : next.add(convId)
+      localStorage.setItem(`pinned_convs_${userId}`, JSON.stringify([...next]))
+      return next
+    })
+  }
+
+  const handleDeleteConv = async (convId) => {
+    setConfirmDeleteId(null)
+    if (activeConvId === convId) setActiveConvId(null)
+    setConversations(prev => prev.filter(c => c.id !== convId))
+    setPinnedIds(prev => { const next = new Set(prev); next.delete(convId); return next })
+    await supabase.from('conversations').delete().eq('id', convId)
+  }
+
+  const getOtherParty = (conv) => {
+    let party
+    if (userRole === 'admin') {
+      party = userId === conv.client_id ? conv.handyman : conv.client
+    } else {
+      party = conv.client_id === userId ? conv.handyman : conv.client
+    }
+    // Admin profile has empty name — override for display
+    if (party?.id === ADMIN_ID) {
+      return { ...party, first_name: 'Admin', last_name: 'HandyConnect' }
+    }
+    return party
+  }
 
   const getContextMeta = (conv) => {
+    if (conv.conversation_type === 'dispute_admin') {
+      const isLv2 = conv.task?.is_rework === true && (conv.task?.rework_level ?? 1) >= 2
+      return isLv2
+        ? { type: 'Dispută Niv.2', label: conv.task?.title ?? 'Dispută activă', badgeCls: 'bg-orange-100 text-orange-700', isDispute: true, disputeLevel: 2 }
+        : { type: 'Dispută',       label: conv.task?.title ?? 'Dispută activă', badgeCls: 'bg-red-100 text-red-700',    isDispute: true, disputeLevel: 1 }
+    }
     if (conv.task?.title) return { type: 'Task', label: conv.task.title, badgeCls: 'bg-blue-100 text-blue-700' }
     if (conv.booking) {
       const title = conv.booking.scheduled_date
@@ -456,16 +557,42 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
   const ACTIVE_TASK_STATUSES    = ['assigned', 'in_progress', 'completed', 'client_approved', 'client_rejected']
   const ACTIVE_BOOKING_STATUSES = ['accepted', 'confirmed', 'in_progress', 'completed']
 
+  const matchesSearch = (conv) => {
+    if (!searchQuery) return true
+    const q = searchQuery.toLowerCase()
+    const other = getOtherParty(conv)
+    const name  = `${other?.first_name || ''} ${other?.last_name || ''}`.toLowerCase()
+    const taskTitle    = (conv.task?.title || '').toLowerCase()
+    const bookingTitle = (conv.booking?.handyman_services?.title || '').toLowerCase()
+    return name.includes(q) || taskTitle.includes(q) || bookingTitle.includes(q)
+  }
+
   const filteredConversations = conversations.filter(conv => {
+    // Admin sees only dispute_admin conversations
+    if (userRole === 'admin') {
+      if (conv.conversation_type !== 'dispute_admin') return false
+      // Party filter: clients are in conv.client when handyman_id===ADMIN_ID
+      if (adminPartyFilter === 'clients'  && conv.handyman_id !== ADMIN_ID) return false
+      if (adminPartyFilter === 'handymen' && conv.client_id   !== ADMIN_ID) return false
+      return matchesSearch(conv)
+    }
+    // Type filter for clients/handymen
+    if (typeFilter === 'dispute'  && conv.conversation_type !== 'dispute_admin') return false
+    if (typeFilter === 'task'     && (conv.conversation_type === 'dispute_admin' || !conv.task_id || conv.booking_id)) return false
+    if (typeFilter === 'booking'  && !conv.booking_id) return false
+    // Dispute admin convs always visible (linked to active dispute)
+    if (conv.conversation_type === 'dispute_admin') return matchesSearch(conv)
     // Closed chats always visible (archived completed work)
     if (!conv.is_closed) {
-      if (conv.task_id && conv.task && !ACTIVE_TASK_STATUSES.includes(conv.task.status)) return false
+      if (conv.task_id    && conv.task    && !ACTIVE_TASK_STATUSES.includes(conv.task.status))    return false
       if (conv.booking_id && conv.booking && !ACTIVE_BOOKING_STATUSES.includes(conv.booking.status)) return false
     }
-    if (!searchQuery) return true
-    const other = getOtherParty(conv)
-    const name = `${other?.first_name || ''} ${other?.last_name || ''}`.toLowerCase()
-    return name.includes(searchQuery.toLowerCase())
+    return matchesSearch(conv)
+  }).sort((a, b) => {
+    const pa = pinnedIds.has(a.id) ? 1 : 0
+    const pb = pinnedIds.has(b.id) ? 1 : 0
+    if (pb !== pa) return pb - pa
+    return 0 // original last_message_at order preserved
   })
 
   const getLastMsgPreview = (conv) => {
@@ -476,6 +603,7 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
   }
 
   return (
+    <>
     <div className="flex flex-col overflow-hidden bg-gray-50 h-full border border-gray-300 rounded-xl shadow-sm">
 
       {/* ── Header complet ── */}
@@ -495,14 +623,48 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
 
       {/* ── Coloana stânga ── */}
       <div className="w-80 flex-shrink-0 border-r border-gray-200 flex flex-col bg-white">
-        <div className="p-4 border-b border-gray-100">
+        <div className="p-3 border-b border-gray-100 space-y-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input type="text" placeholder="Caută conversație..." value={searchQuery}
+            <input type="text" placeholder="Caută după nume, task, rezervare..." value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
+          {userRole === 'admin' ? (
+            <div className="flex gap-1">
+              {[
+                { id: 'all',      label: 'Toți',    Icon: Users   },
+                { id: 'clients',  label: 'Clienți', Icon: User    },
+                { id: 'handymen', label: 'Meșteri', Icon: Wrench  },
+              ].map(({ id, label, Icon }) => (
+                <button key={id} onClick={() => setAdminPartyFilter(id)}
+                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold transition
+                    ${adminPartyFilter === id
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                  <Icon className="w-3 h-3" /> {label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="flex gap-1">
+              {[
+                { id: 'all',     label: 'Toate'     },
+                { id: 'task',    label: 'Taskuri'   },
+                { id: 'booking', label: 'Rezervări' },
+                { id: 'dispute', label: 'Dispute'   },
+              ].map(({ id, label }) => (
+                <button key={id} onClick={() => setTypeFilter(id)}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition
+                    ${typeFilter === id
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -516,51 +678,66 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
             </div>
           ) : (
             filteredConversations.map(conv => {
-              const other = getOtherParty(conv)
+              const other    = getOtherParty(conv)
               const initials = other ? `${other.first_name?.[0] || ''}${other.last_name?.[0] || ''}`.toUpperCase() : '?'
               const isActive = conv.id === activeConvId
-              const preview = getLastMsgPreview(conv)
-              const ctx = getContextMeta(conv)
+              const isPinned = pinnedIds.has(conv.id)
+              const preview  = getLastMsgPreview(conv)
+              const ctx      = getContextMeta(conv)
 
               return (
-                <button key={conv.id} onClick={() => handleSelectConversation(conv.id)}
-                  className={`w-full text-left px-4 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors ${isActive ? 'bg-blue-50 border-l-[3px] border-l-blue-600' : ''}`}
-                >
-                  <div className="flex items-center gap-3">
-                    {other?.avatar_url
-                      ? <img src={other.avatar_url} alt="" className="w-11 h-11 rounded-full object-cover flex-shrink-0" />
-                      : <div className="w-11 h-11 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">{initials}</div>
-                    }
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <span className={`text-sm truncate ${conv.unreadCount > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}>
-                          {other?.first_name} {other?.last_name}
-                        </span>
-                        <span className="text-[11px] text-gray-400 flex-shrink-0">{formatTime(conv.last_message_at)}</span>
-                      </div>
+                <div key={conv.id} className="relative border-b border-gray-50"
+                  onContextMenu={e => {
+                    e.preventDefault()
+                    setContextMenu({ convId: conv.id, x: e.clientX, y: e.clientY })
+                  }}>
 
-                      <div className="flex items-center gap-1.5 mt-1 min-w-0">
-                        {ctx.type && (
-                          <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${ctx.badgeCls}`}>
-                            {ctx.type}
-                          </span>
-                        )}
-                        <span className="text-xs text-gray-600 font-medium truncate">{ctx.label}</span>
-                        {conv.unreadCount > 0 && (
-                          <span className="ml-auto flex-shrink-0 w-5 h-5 bg-blue-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                            {conv.unreadCount > 9 ? '9+' : conv.unreadCount}
-                          </span>
+                  {isPinned && <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-amber-400 z-10" />}
+
+                  <button onClick={() => handleSelectConversation(conv.id)}
+                    className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors ${isActive ? 'bg-blue-50 border-l-[3px] border-l-blue-600' : ''}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="relative flex-shrink-0">
+                        {other?.avatar_url
+                          ? <img src={other.avatar_url} alt="" className="w-11 h-11 rounded-full object-cover" />
+                          : <div className="w-11 h-11 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm">{initials}</div>
+                        }
+                        {isPinned && (
+                          <div className="absolute -top-1 -right-1 w-4 h-4 bg-amber-400 rounded-full flex items-center justify-center">
+                            <Pin className="w-2.5 h-2.5 text-white" />
+                          </div>
                         )}
                       </div>
-
-                      {preview && (
-                        <p className={`text-xs truncate mt-0.5 ${conv.unreadCount > 0 ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>
-                          {conv.lastMessage?.sender_id === userId ? 'Tu: ' : ''}{preview}
-                        </p>
-                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className={`text-sm truncate ${conv.unreadCount > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}>
+                            {other?.first_name} {other?.last_name}
+                          </span>
+                          <span className="text-[11px] text-gray-400 flex-shrink-0">{formatTime(conv.last_message_at)}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-1 min-w-0">
+                          {ctx.type && (
+                            <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${ctx.badgeCls}`}>
+                              {ctx.type}
+                            </span>
+                          )}
+                          <span className="text-xs text-gray-600 font-medium truncate">{ctx.label}</span>
+                          {conv.unreadCount > 0 && (
+                            <span className="ml-auto flex-shrink-0 w-5 h-5 bg-blue-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                              {conv.unreadCount > 9 ? '9+' : conv.unreadCount}
+                            </span>
+                          )}
+                        </div>
+                        {preview && (
+                          <p className={`text-xs truncate mt-0.5 ${conv.unreadCount > 0 ? 'text-gray-700 font-medium' : 'text-gray-400'}`}>
+                            {conv.lastMessage?.sender_id === userId ? 'Tu: ' : ''}{preview}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                </div>
               )
             })
           )}
@@ -608,17 +785,22 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
               )
             })()}
 
-            <JobPinCard conv={activeConv} onTaskClick={onTaskClick} onBookingClick={onBookingClick} />
+            <JobPinCard conv={activeConv} onTaskClick={onTaskClick} onBookingClick={onBookingClick} onDisputeClick={onDisputeClick} />
 
             {/* Banner conversație închisă */}
-            {activeConv?.is_closed && (
+            {activeConv?.is_closed && activeConv?.dispute_id ? (
+              <div className="mx-4 mt-3 flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-300 rounded-xl text-sm text-red-800 font-medium flex-shrink-0">
+                <ShieldAlert className="w-4 h-4 flex-shrink-0 text-red-600 mt-0.5" />
+                <span>Disputa a fost deschisă — conversația cu meșterul este înghețată pe durata procedurii. Continuați discuțiile în chat-ul cu adminul.</span>
+              </div>
+            ) : activeConv?.is_closed ? (
               <div className="mx-4 mt-3 flex items-center gap-2 px-4 py-3 bg-green-50 border border-green-200 rounded-xl text-sm text-green-800 font-medium flex-shrink-0">
                 <CheckCircle className="w-4 h-4 flex-shrink-0 text-green-600" />
                 {activeConv.task?.status === 'client_rejected'
                   ? 'Lucrarea a fost contestată. Această conversație este arhivată.'
                   : 'Lucrarea a fost finalizată cu succes! Această conversație este arhivată.'}
               </div>
-            )}
+            ) : null}
 
             {/* Mesaje */}
             <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-2">
@@ -632,6 +814,29 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
                   const prevMsg = idx > 0 ? messages[idx - 1] : null
                   const showSeparator = !prevMsg ||
                     new Date(msg.created_at).toDateString() !== new Date(prevMsg.created_at).toDateString()
+
+                  // System messages render as centered banners
+                  if (msg.is_system) {
+                    const isDisputeBanner = msg.content?.startsWith('Disputa a fost deschisă')
+                    return (
+                      <Fragment key={msg.id}>
+                        {showSeparator && <DateSeparator dateIso={msg.created_at} />}
+                        <div className="flex justify-center my-2">
+                          <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium max-w-[85%] text-center ${
+                            isDisputeBanner
+                              ? 'bg-red-50 border border-red-200 text-red-700'
+                              : 'bg-blue-50 border border-blue-200 text-blue-700'
+                          }`}>
+                            {isDisputeBanner
+                              ? <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                              : <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />}
+                            <span>{msg.content}</span>
+                          </div>
+                        </div>
+                      </Fragment>
+                    )
+                  }
+
                   return (
                     <Fragment key={msg.id}>
                       {showSeparator && <DateSeparator dateIso={msg.created_at} />}
@@ -755,5 +960,58 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
       )}
     </div>
     </div>
+
+      {/* ── Right-click context menu ── */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-xl py-1 min-w-[180px]"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <button
+            onClick={() => { handlePinToggle(contextMenu.convId); setContextMenu(null) }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition"
+          >
+            <Pin className="w-4 h-4 text-amber-500" />
+            {pinnedIds.has(contextMenu.convId) ? 'Desprinde conversația' : 'Fixează sus'}
+          </button>
+          <div className="h-px bg-gray-100 mx-2" />
+          <button
+            onClick={() => { setConfirmDeleteId(contextMenu.convId); setContextMenu(null) }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition"
+          >
+            <Trash2 className="w-4 h-4" />
+            Șterge conversația
+          </button>
+        </div>
+      )}
+
+      {/* ── Delete confirmation modal ── */}
+      {confirmDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onMouseDown={() => setConfirmDeleteId(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 mx-4"
+            onMouseDown={e => e.stopPropagation()}>
+            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trash2 className="w-6 h-6 text-red-500" />
+            </div>
+            <h3 className="text-base font-bold text-gray-800 text-center mb-1">Ștergi conversația?</h3>
+            <p className="text-sm text-gray-500 text-center mb-6">
+              Toate mesajele din această conversație vor fi șterse permanent și nu pot fi recuperate.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmDeleteId(null)}
+                className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+                Anulează
+              </button>
+              <button onClick={() => handleDeleteConv(confirmDeleteId)}
+                className="flex-1 py-2.5 bg-red-500 text-white rounded-xl text-sm font-bold hover:bg-red-600 transition">
+                Da, șterge
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
