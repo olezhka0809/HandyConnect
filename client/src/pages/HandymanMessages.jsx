@@ -5,6 +5,7 @@ import HandymanNavbar from '../components/handyman-dashboard/HandymanNavbar'
 import MessagingUI from '../components/messages/MessagingUI'
 import TaskDetailModal from '../components/handyman-dashboard/TaskDetailModal'
 import JobRequestModal from '../components/handyman-dashboard/JobRequestModal'
+import HandymanDisputeModal from '../components/handyman-dashboard/HandymanDisputeModal'
 
 function fmtDate(dateStr, timeStr) {
   if (!dateStr) return '—'
@@ -44,6 +45,7 @@ export default function HandymanMessages() {
   const [searchParams] = useSearchParams()
   const [selectedTaskId, setSelectedTaskId] = useState(null)
   const [selectedJob, setSelectedJob] = useState(null)
+  const [selectedDispute, setSelectedDispute] = useState(null)
 
   const initialBookingId = searchParams.get('booking_id') || null
   const initialTaskId = searchParams.get('task_id') || null
@@ -67,6 +69,21 @@ export default function HandymanMessages() {
     if (data) setSelectedJob(normaliseBookingForModal(data))
   }
 
+  const handleDisputeClick = async ({ disputeId }) => {
+    const { data } = await supabase
+      .from('task_disputes')
+      .select(`
+        id, task_id, status, details, photos, reason_id, created_at,
+        rework_deadline, client_rework_confirmed_at, handyman_response, handyman_response_at, timeline, handyman_evidence,
+        refund_amount, handyman_payout, admin_decision, resolution_note,
+        task:task_id (id, title, status, final_price, client_id, is_rework, rework_level, profiles!tasks_client_id_fkey(first_name, last_name)),
+        rejection_reasons!reason_id(name)
+      `)
+      .eq('id', disputeId)
+      .maybeSingle()
+    if (data) setSelectedDispute(data)
+  }
+
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
       <HandymanNavbar />
@@ -80,6 +97,7 @@ export default function HandymanMessages() {
             backPath="/handyman/dashboard"
             onTaskClick={handleTaskClick}
             onBookingClick={handleBookingClick}
+            onDisputeClick={handleDisputeClick}
           />
         </div>
       )}
@@ -99,6 +117,13 @@ export default function HandymanMessages() {
           onUpdate={() => setSelectedJob(null)}
         />
       )}
+
+      <HandymanDisputeModal
+        isOpen={!!selectedDispute}
+        dispute={selectedDispute}
+        onClose={() => setSelectedDispute(null)}
+        onRefresh={() => setSelectedDispute(null)}
+      />
     </div>
   )
 }

@@ -34,6 +34,7 @@ export default function Messages() {
             backPath="/dashboard"
             onTaskClick={(taskId) => setSelectedTaskId(taskId)}
             onBookingClick={(bookingId) => setSelectedBookingId(bookingId)}
+            onDisputeClick={({ taskId }) => setSelectedTaskId(taskId)}
           />
         </div>
       )}
