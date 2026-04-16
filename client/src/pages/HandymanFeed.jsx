@@ -10,8 +10,17 @@ import { updateHandymanWorkZone } from '../utils/cityLookup'
 import {
   MapPin, Clock, AlertTriangle, Zap, Search,
   Send, X, CheckCircle, DollarSign,
-  Navigation, Settings, User, MessageSquare, Info
+  Navigation, Settings, User, MessageSquare, Info,
+  ShieldCheck, Lock, Award, RotateCcw
 } from 'lucide-react'
+
+const REWORK_SLOTS = [
+  '07:00','07:30','08:00','08:30','09:00','09:30',
+  '10:00','10:30','11:00','11:30','12:00','12:30',
+  '13:00','13:30','14:00','14:30','15:00','15:30',
+  '16:00','16:30','17:00','17:30','18:00','18:30','19:00',
+]
+const toSlotMins = t => { const [h, m] = t.split(':'); return parseInt(h) * 60 + parseInt(m) }
 
 export default function HandymanFeed() {
   const navigate = useNavigate()
@@ -19,15 +28,18 @@ export default function HandymanFeed() {
   const [handymanProfile, setHandymanProfile] = useState(null)
   const [tasks, setTasks] = useState([])
   const [filteredTasks, setFilteredTasks] = useState([])
+  const [visibleTasks, setVisibleTasks] = useState([]) // tasks after level/skill/mode filters, before zone filter
   const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(true)
 
-  // Filters
-  const [searchQuery, setSearchQuery] = useState('')
-  const [categoryFilter, setCategoryFilter] = useState('all')
-  const [urgencyFilter, setUrgencyFilter] = useState('all')
-  const [zoneFilter, setZoneFilter] = useState('all')
-  const [sortBy, setSortBy] = useState('relevance')
+  // Pending filters (ce a selectat userul, dar nu a apăsat încă "Caută")
+  const [pending, setPending] = useState({
+    search: '', category: 'all', urgency: 'all', zone: 'all', sort: 'relevance'
+  })
+  // Applied filters (ce filtrează efectiv lista)
+  const [applied, setApplied] = useState({
+    search: '', category: 'all', urgency: 'all', zone: 'all', sort: 'relevance'
+  })
 
   // Detail modal
   const [detailTaskId, setDetailTaskId] = useState(null)
@@ -44,7 +56,14 @@ export default function HandymanFeed() {
     available_time: '',
   })
   const [sendingOffer, setSendingOffer] = useState(false)
-  const [acceptingId, setAcceptingId] = useState(null)
+  const [acceptingId,      setAcceptingId]      = useState(null)
+  // Rework proposal form: taskId → { date, time, note } | null = closed
+  const [reworkProposalForm, setReworkProposalForm] = useState({}) // taskId → {date,time,note}
+  const [submittingProposal, setSubmittingProposal] = useState(null) // taskId
+
+  // Approved skills (for required_skill_id gating + category filter)
+  const [approvedSkills, setApprovedSkills] = useState([]) // [{skill_id, skill_score, skills:{category_id}}]
+  const [categoryMode,   setCategoryMode]   = useState('mine') // 'mine' | 'all'
 
   // Work zone popups
   const [showZonePopup, setShowZonePopup] = useState(false)
@@ -64,12 +83,13 @@ export default function HandymanFeed() {
 
   useEffect(() => {
     applyFilters()
-  }, [tasks, searchQuery, categoryFilter, urgencyFilter, zoneFilter, sortBy])
+  }, [tasks, applied, handymanProfile, approvedSkills, categoryMode])
 
   // ─── LOAD DATA ───────────────────────────────────────
   async function loadData() {
     setLoading(true)
-    const { data: { user: authUser } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const authUser = session?.user
     if (!authUser) { navigate('/login'); return }
     setUser(authUser)
 
@@ -88,6 +108,14 @@ export default function HandymanFeed() {
       .single()
 
     setHandymanProfile(hp)
+
+    // Skilluri aprobate: pentru filtrare required_skill_id + category filter
+    const { data: skills } = await supabase
+      .from('user_skills')
+      .select('skill_id, skill_score, skills(category_id, name)')
+      .eq('user_id', authUser.id)
+      .eq('status', 'approved')
+    setApprovedSkills(skills || [])
 
     // Dacă nu are zona setată → arată popup
     if (!hp?.feed_setup_completed) {
@@ -198,6 +226,42 @@ export default function HandymanFeed() {
       })
     }
 
+    // Taskuri de relucrare — vizibile doar meșterilor cu nivel verificare >= 2, rating >= 4.0 și reliability >= 70
+    const verLevel     = hp?.verification_level ?? 0
+    const hpRating     = hp?.rating_avg ?? 0
+    const hpReliability = hp?.reliability_score ?? 100
+    if (verLevel >= 2 && hpRating >= 4.0 && hpReliability >= 70) {
+      const { data: reworkTasks } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          category:category_id (name),
+          client:client_id (first_name, last_name, avatar_url)
+        `)
+        .eq('status', 'open')
+        .eq('is_rework', true)
+        .eq('is_public', true)
+
+      if (reworkTasks) {
+        reworkTasks.forEach(t => {
+          if (!nearbyIds.has(t.id)) {
+            allTasks.push({
+              ...t,
+              category_name: t.category?.name,
+              client_name: `${t.client?.first_name || ''} ${t.client?.last_name || ''}`.trim(),
+              client_avatar: t.client?.avatar_url,
+              distance_km: null,
+              is_in_main_zone: false,
+              is_proposed: false,
+              is_rework: true,
+              offer_count: 0,
+            })
+            nearbyIds.add(t.id)
+          }
+        })
+      }
+    }
+
     // Verifică ofertele existente ale handymanului
     const { data: myOffers } = await supabase
       .from('task_offers')
@@ -211,43 +275,101 @@ export default function HandymanFeed() {
     setTasks(allTasks)
   }
 
+  // Derived set of category IDs from the handyman's approved skills
+  const approvedCatIds = new Set(
+    approvedSkills.map(s => s.skills?.category_id).filter(Boolean)
+  )
+
+  // Returns true if the handyman is allowed to act on a task (accept/negotiate)
+  function canActOnTask(task) {
+    if (!task.category_id) return true            // uncategorized tasks are open to all
+    if (approvedCatIds.size === 0) return false   // no approved skills → can't act on categorized tasks
+    return approvedCatIds.has(task.category_id)
+  }
+
   // ─── FILTERS ─────────────────────────────────────────
   function applyFilters() {
     let result = [...tasks]
     result = result.filter(t => !t.my_offer_status)
-    if (searchQuery) {
-        const q = searchQuery.toLowerCase()
-        result = result.filter(t =>
-          t.title?.toLowerCase().includes(q) ||
-          t.description?.toLowerCase().includes(q) ||
-          t.category_name?.toLowerCase().includes(q) ||
-          t.keywords?.some(k => k.toLowerCase().includes(q))
-        )
-      }
 
-    if (categoryFilter !== 'all') {
-      result = result.filter(t => t.category_name === categoryFilter)
+    // Risk level gate based on verification_level (7-level system)
+    // Level 1: no feed access
+    // Level 2+: low-risk tasks
+    // Level 4+: medium-risk tasks + own bookings
+    // Level 5+: high-risk tasks + fixed-price services
+    const level = handymanProfile?.verification_level ?? 1
+    if (level < 2) {
+      setFilteredTasks([])
+      return
+    } else if (level < 4) {
+      result = result.filter(t => !t.risk_level || t.risk_level === 'low')
+    } else if (level < 5) {
+      result = result.filter(t => !t.risk_level || t.risk_level === 'low' || t.risk_level === 'medium')
+    }
+    // level 5+: all risk levels visible
+
+    // Rework marketplace gate: needs level >= 3, reliability_score >= 70, rating_avg >= 4.0
+    const reliabilityScore = handymanProfile?.reliability_score ?? 60
+    const ratingAvg        = handymanProfile?.rating_avg ?? 0
+    result = result.filter(t => {
+      if (!t.is_rework) return true
+      return level >= 3 && reliabilityScore >= 70 && ratingAvg >= 4.0
+    })
+
+    // Skill-based gate: if a task requires a specific skill, only show it to
+    // handymen who have that skill approved with sufficient skill_score
+    const skillMap = {}
+    approvedSkills.forEach(s => { skillMap[s.skill_id] = s.skill_score ?? 0 })
+    result = result.filter(t => {
+      if (!t.required_skill_id) return true
+      const score = skillMap[t.required_skill_id]
+      if (score === undefined) return false
+      return score >= (t.minimum_skill_score ?? 0)
+    })
+
+    // Category-mode filter: show only tasks matching approved skill categories.
+    // When no skills approved, categorized tasks are hidden in 'mine' mode.
+    if (categoryMode === 'mine') {
+      result = result.filter(t => !t.category_id || approvedCatIds.has(t.category_id))
     }
 
-    if (urgencyFilter !== 'all') {
-      result = result.filter(t => t.urgency === urgencyFilter)
+    if (applied.search) {
+      const q = applied.search.toLowerCase()
+      result = result.filter(t =>
+        t.title?.toLowerCase().includes(q) ||
+        t.description?.toLowerCase().includes(q) ||
+        t.category_name?.toLowerCase().includes(q) ||
+        t.keywords?.some(k => k.toLowerCase().includes(q))
+      )
     }
 
-    if (zoneFilter === 'main') {
+    if (applied.category !== 'all') {
+      result = result.filter(t => t.category_name === applied.category)
+    }
+
+    if (applied.urgency !== 'all') {
+      result = result.filter(t => t.urgency === applied.urgency)
+    }
+
+    setVisibleTasks([...result]) // snapshot before zone filter — used for stats counts
+
+    if (applied.zone === 'main') {
       result = result.filter(t => t.is_in_main_zone)
-    } else if (zoneFilter === 'extended') {
-      result = result.filter(t => !t.is_in_main_zone && !t.is_proposed)
-    } else if (zoneFilter === 'proposed') {
+    } else if (applied.zone === 'extended') {
+      result = result.filter(t => !t.is_in_main_zone && !t.is_proposed && !t.is_rework)
+    } else if (applied.zone === 'proposed') {
       result = result.filter(t => t.is_proposed)
+    } else if (applied.zone === 'rework') {
+      result = result.filter(t => t.is_rework)
     }
 
-    if (sortBy === 'newest') {
+    if (applied.sort === 'newest') {
       result.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-    } else if (sortBy === 'closest') {
+    } else if (applied.sort === 'closest') {
       result.sort((a, b) => (a.distance_km || 999) - (b.distance_km || 999))
-    } else if (sortBy === 'price_high') {
+    } else if (applied.sort === 'price_high') {
       result.sort((a, b) => (b.budget || 0) - (a.budget || 0))
-    } else if (sortBy === 'urgent') {
+    } else if (applied.sort === 'urgent') {
       const urgencyOrder = { emergency: 0, urgent: 1, normal: 2 }
       result.sort((a, b) => (urgencyOrder[a.urgency] || 2) - (urgencyOrder[b.urgency] || 2))
     }
@@ -388,11 +510,19 @@ export default function HandymanFeed() {
   async function handleAcceptDirect(task) {
     if (!task.budget) return
     setAcceptingId(task.id)
-    await supabase.from('tasks').update({
+
+    const { data: updated, error } = await supabase.from('tasks').update({
       status: 'assigned',
       handyman_id: user.id,
       updated_at: new Date().toISOString(),
-    }).eq('id', task.id)
+    }).eq('id', task.id).select('id')
+
+    if (error || !updated?.length) {
+      console.error('[handleAcceptDirect] update failed:', error ?? 'RLS blocked (0 rows)')
+      alert(`Acceptarea a eșuat: ${error?.message ?? 'permisiuni insuficiente'}`)
+      setAcceptingId(null)
+      return
+    }
 
     const handymanName = `${handymanProfile?.first_name || ''} ${handymanProfile?.last_name || ''}`.trim() || 'Un meșter'
     await supabase.from('notifications').insert({
@@ -403,10 +533,48 @@ export default function HandymanFeed() {
       data: { task_id: task.id, redirect: '/dashboard' },
     })
 
+    // Creare conversație automată
+    const { data: existingConv } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('client_id', task.client_id)
+      .eq('handyman_id', user.id)
+      .eq('task_id', task.id)
+      .maybeSingle()
+    if (!existingConv) {
+      await supabase.from('conversations').insert({
+        client_id: task.client_id,
+        handyman_id: user.id,
+        task_id: task.id,
+      })
+    }
+
     setTasks(prev => prev.map(t =>
       t.id === task.id ? { ...t, my_offer_status: 'accepted' } : t
     ))
     setAcceptingId(null)
+  }
+
+  // ─── REWORK PROPOSAL HANDLER ─────────────────────────
+  async function handleSubmitReworkProposal(task) {
+    const form = reworkProposalForm[task.id]
+    if (!form?.date) return
+    setSubmittingProposal(task.id)
+    const { data, error } = await supabase.rpc('submit_rework_proposal', {
+      p_task_id: task.id,
+      p_date:    form.date,
+      p_time:    form.time || null,
+      p_note:    form.note || null,
+    })
+    setSubmittingProposal(null)
+    if (error || data?.success === false) {
+      alert(data?.error || error?.message || 'Eroare la trimiterea propunerii.')
+      return
+    }
+    setTasks(prev => prev.map(t =>
+      t.id === task.id ? { ...t, my_offer_status: 'pending' } : t
+    ))
+    setReworkProposalForm(prev => { const n = { ...prev }; delete n[task.id]; return n })
   }
 
   // ─── OFFER HANDLER ───────────────────────────────────
@@ -452,8 +620,8 @@ export default function HandymanFeed() {
 
   // ─── HELPERS ─────────────────────────────────────────
   const getUrgencyBadge = (urgency) => {
-    if (urgency === 'emergency') return { label: 'Urgență', class: 'bg-red-100 text-red-700', icon: AlertTriangle }
-    if (urgency === 'urgent') return { label: 'Urgent', class: 'bg-yellow-100 text-yellow-700', icon: Zap }
+    if (urgency === 'emergency') return { label: 'Urgență critică', class: 'bg-red-100 text-red-700', icon: AlertTriangle }
+    if (urgency === 'urgent') return { label: 'Urgență medie', class: 'bg-yellow-100 text-yellow-700', icon: Zap }
     return { label: 'Normal', class: 'bg-green-100 text-green-700', icon: Clock }
   }
 
@@ -480,6 +648,37 @@ export default function HandymanFeed() {
     )
   }
 
+  // ─── LEVEL-0 BLOCK ───────────────────────────────────
+  if (!loading && (handymanProfile?.verification_level ?? 0) === 0 && handymanProfile?.feed_setup_completed) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <HandymanNavbar />
+        <div className="max-w-xl mx-auto px-4 py-20 text-center">
+          <div className="w-20 h-20 rounded-full bg-yellow-100 flex items-center justify-center mx-auto mb-6">
+            <Lock className="w-10 h-10 text-yellow-600" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-3">Acces restricționat</h2>
+          <p className="text-gray-500 mb-6 leading-relaxed">
+            Pentru a vedea taskuri disponibile trebuie să ai cel puțin <strong>Nivelul 1 de verificare</strong>.
+            Completează profilul tău de meșter și trimite cererea de verificare.
+          </p>
+          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-5 mb-8 text-left space-y-2 text-sm text-yellow-800">
+            <p className="font-semibold flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Cum obții Nivelul 1:</p>
+            <p>1. Completează profilul tău de meșter (bio, specialități, experiență)</p>
+            <p>2. Adminul aprobă profilul tău → primești <strong>Nivelul 1</strong></p>
+            <p>3. Câștigă acces la taskuri de risc scăzut (electricitate, instalații etc.)</p>
+          </div>
+          <button
+            onClick={() => navigate('/handyman/personal-profile')}
+            className="px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition"
+          >
+            Mergi la profilul meu
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // ─── MAIN RENDER ─────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
@@ -488,15 +687,42 @@ export default function HandymanFeed() {
       <div className="max-w-6xl mx-auto px-4 py-6">
 
         {/* ── Header ──────────────────────────────────── */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-start justify-between mb-5">
           <div>
             <h1 className="text-2xl font-bold text-gray-800">Taskuri Disponibile</h1>
-            {handymanProfile?.primary_city && (
-              <p className="text-gray-500 text-sm mt-0.5">
-                {handymanProfile.primary_city}, {handymanProfile.primary_county} — Rază: {handymanProfile.work_radius_km} km
-                <span className="text-yellow-600 ml-1">(+{handymanProfile.extended_radius_km} km extins)</span>
-              </p>
-            )}
+            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+              {handymanProfile?.primary_city && (
+                <span className="text-sm text-gray-500">
+                  <MapPin className="w-3.5 h-3.5 inline mr-0.5" />
+                  {handymanProfile.primary_city} · {handymanProfile.work_radius_km} km
+                  <span className="text-yellow-600"> +{handymanProfile.extended_radius_km} km</span>
+                </span>
+              )}
+              {(handymanProfile?.verification_level ?? 0) === 1 && (
+                <button
+                  onClick={() => navigate('/handyman/personal-profile')}
+                  className="flex items-center gap-1 text-xs bg-yellow-100 text-yellow-700 px-2.5 py-1 rounded-full border border-yellow-200 hover:bg-yellow-200 transition"
+                >
+                  <ShieldCheck className="w-3 h-3" /> Nivel 1 · Risc scăzut · Verifică-te →
+                </button>
+              )}
+              {(handymanProfile?.verification_level ?? 0) === 2 && (
+                <button
+                  onClick={() => navigate('/handyman/personal-profile')}
+                  className="flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full border border-blue-200 hover:bg-blue-200 transition"
+                >
+                  <ShieldCheck className="w-3 h-3" /> Nivel 2 · Risc mediu · Finalizează →
+                </button>
+              )}
+              {approvedSkills.length === 0 && (
+                <button
+                  onClick={() => navigate('/handyman/personal-profile')}
+                  className="flex items-center gap-1 text-xs bg-orange-100 text-orange-700 px-2.5 py-1 rounded-full border border-orange-200 hover:bg-orange-200 transition"
+                >
+                  <Award className="w-3 h-3" /> Niciun skill aprobat · Adaugă →
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-gray-500 font-medium">{filteredTasks.length} taskuri</span>
@@ -523,68 +749,179 @@ export default function HandymanFeed() {
           </div>
         </div>
 
-        {/* ── Filters Bar ─────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Caută taskuri..."
-                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+        {/* ── Category Mode Toggle ────────────────────── */}
+        {approvedSkills.length > 0 && (
+          <div className="flex items-center mb-4">
+            <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white text-sm">
+              <button
+                onClick={() => {
+                  setCategoryMode('mine')
+                  const updated = { ...pending, zone: 'all' }
+                  setPending(updated); setApplied(updated)
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 font-medium transition
+                  ${categoryMode === 'mine' && applied.zone !== 'rework' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                <Award className="w-4 h-4" />
+                Categoriile mele
+              </button>
+              <button
+                onClick={() => {
+                  setCategoryMode('all')
+                  const updated = { ...pending, zone: 'all' }
+                  setPending(updated); setApplied(updated)
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 font-medium transition border-l border-gray-200
+                  ${categoryMode === 'all' && applied.zone !== 'rework' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}
+              >
+                <Search className="w-4 h-4" />
+                Toate taskurile
+              </button>
+
+              {/* Rework tab — visible only for eligible handymen */}
+              {(handymanProfile?.verification_level ?? 0) >= 2 && (handymanProfile?.rating_avg ?? 0) >= 4.0 && (
+                <button
+                  onClick={() => {
+                    const isRework = applied.zone === 'rework'
+                    const updated = { ...pending, zone: isRework ? 'all' : 'rework' }
+                    setPending(updated); setApplied(updated)
+                  }}
+                  className={`flex items-center gap-2 px-4 py-2.5 font-medium transition border-l border-gray-200
+                    ${applied.zone === 'rework' ? 'bg-orange-500 text-white' : 'text-orange-600 hover:bg-orange-50'}`}
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  Relucrări
+                  {visibleTasks.filter(t => t.is_rework).length > 0 && (
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${applied.zone === 'rework' ? 'bg-orange-400 text-white' : 'bg-orange-100 text-orange-600'}`}>
+                      {visibleTasks.filter(t => t.is_rework).length}
+                    </span>
+                  )}
+                </button>
+              )}
             </div>
-
-            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="all">Toate categoriile</option>
-              {categories.map(c => (
-                <option key={c.id} value={c.name}>{c.name}</option>
-              ))}
-            </select>
-
-            <select value={urgencyFilter} onChange={(e) => setUrgencyFilter(e.target.value)}
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="all">Orice urgență</option>
-              <option value="emergency">Urgență</option>
-              <option value="urgent">Urgent</option>
-              <option value="normal">Normal</option>
-            </select>
-
-            <select value={zoneFilter} onChange={(e) => setZoneFilter(e.target.value)}
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="all">Toate zonele</option>
-              <option value="main">🟢 Zona principală</option>
-              <option value="extended">🟡 Zona extinsă</option>
-              <option value="proposed">📩 Propuse direct</option>
-            </select>
-
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="relevance">Relevanță</option>
-              <option value="newest">Cele mai noi</option>
-              <option value="closest">Cele mai apropiate</option>
-              <option value="price_high">Buget mare</option>
-              <option value="urgent">Cele mai urgente</option>
-            </select>
           </div>
-        </div>
+        )}
+
+        {/* ── Filters Bar ─────────────────────────────── */}
+        {(() => {
+          const visibleCategories = categoryMode === 'mine' && approvedCatIds.size > 0
+            ? categories.filter(c => approvedCatIds.has(c.id))
+            : categories
+          const filtersChanged =
+            pending.search !== applied.search ||
+            pending.category !== applied.category ||
+            pending.urgency !== applied.urgency ||
+            pending.zone !== applied.zone ||
+            pending.sort !== applied.sort
+
+          return (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 mb-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="relative flex-1 min-w-[180px]">
+                  <input
+                    type="text"
+                    value={pending.search}
+                    onChange={(e) => setPending(p => ({ ...p, search: e.target.value }))}
+                    onKeyDown={(e) => e.key === 'Enter' && setApplied({ ...pending })}
+                    placeholder="Caută taskuri..."
+                    className="w-full pl-4 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <select
+                  value={pending.category}
+                  onChange={(e) => setPending(p => ({ ...p, category: e.target.value }))}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">{categoryMode === 'mine' ? 'Toate categoriile mele' : 'Toate categoriile'}</option>
+                  {visibleCategories.map(c => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={pending.urgency}
+                  onChange={(e) => setPending(p => ({ ...p, urgency: e.target.value }))}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Orice urgență</option>
+                  <option value="emergency">Urgență critică</option>
+                  <option value="urgent">Urgență medie</option>
+                  <option value="normal">Normal</option>
+                </select>
+
+                <select
+                  value={pending.zone}
+                  onChange={(e) => setPending(p => ({ ...p, zone: e.target.value }))}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">Toate zonele</option>
+                  <option value="main">🟢 Zona principală</option>
+                  <option value="extended">🟡 Zona extinsă</option>
+                  <option value="proposed">📩 Propuse direct</option>
+                </select>
+
+                <select
+                  value={pending.sort}
+                  onChange={(e) => setPending(p => ({ ...p, sort: e.target.value }))}
+                  className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="relevance">Relevanță</option>
+                  <option value="newest">Cele mai noi</option>
+                  <option value="closest">Cele mai apropiate</option>
+                  <option value="price_high">Buget mare</option>
+                  <option value="urgent">Cele mai urgente</option>
+                </select>
+
+                <button
+                  onClick={() => setApplied({ ...pending })}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition
+                    ${filtersChanged
+                      ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                >
+                  <Search className="w-4 h-4" />
+                  Caută
+                </button>
+
+                {filtersChanged && (
+                  <button
+                    onClick={() => {
+                      const reset = { search: '', category: 'all', urgency: 'all', zone: 'all', sort: 'relevance' }
+                      setPending(reset)
+                      setApplied(reset)
+                    }}
+                    className="text-xs text-gray-400 hover:text-gray-600 transition"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })()}
 
         {/* ── Zone Stats ──────────────────────────────── */}
-        <div className="grid grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-5 gap-3 mb-6">
           {[
-            { label: 'Total', value: tasks.length, color: 'text-blue-600', filter: 'all' },
-            { label: 'Zona principală', value: tasks.filter(t => t.is_in_main_zone).length, color: 'text-green-600', filter: 'main' },
-            { label: 'Zona extinsă', value: tasks.filter(t => !t.is_in_main_zone && !t.is_proposed).length, color: 'text-yellow-600', filter: 'extended' },
-            { label: 'Propuse direct', value: tasks.filter(t => t.is_proposed).length, color: 'text-purple-600', filter: 'proposed' },
+            { label: 'Total', value: visibleTasks.length, color: 'text-blue-600', filter: 'all' },
+            { label: 'Zona principală', value: visibleTasks.filter(t => t.is_in_main_zone).length, color: 'text-green-600', filter: 'main' },
+            { label: 'Zona extinsă', value: visibleTasks.filter(t => !t.is_in_main_zone && !t.is_proposed && !t.is_rework).length, color: 'text-yellow-600', filter: 'extended' },
+            { label: 'Propuse direct', value: visibleTasks.filter(t => t.is_proposed).length, color: 'text-purple-600', filter: 'proposed' },
+            { label: 'Relucrări', value: visibleTasks.filter(t => t.is_rework).length, color: 'text-orange-600', filter: 'rework', accent: true },
           ].map((stat) => (
             <button
               key={stat.label}
-              onClick={() => setZoneFilter(stat.filter)}
+              onClick={() => {
+                const updated = { ...pending, zone: stat.filter }
+                setPending(updated)
+                setApplied(updated)
+              }}
               className={`p-3 rounded-xl border transition text-left
-                ${zoneFilter === stat.filter ? 'border-blue-300 bg-blue-50' : 'border-gray-100 bg-white hover:border-gray-200'}
+                ${applied.zone === stat.filter
+                  ? stat.accent ? 'border-orange-300 bg-orange-50' : 'border-blue-300 bg-blue-50'
+                  : 'border-gray-100 bg-white hover:border-gray-200'}
               `}
             >
               <p className="text-xs text-gray-500">{stat.label}</p>
@@ -606,7 +943,7 @@ export default function HandymanFeed() {
                   onClick={() => setDetailTaskId(task.id)}
                   className="bg-white rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition overflow-hidden cursor-pointer"
                 >
-                  <div className={`h-1 ${task.is_proposed ? 'bg-purple-500' : task.is_in_main_zone ? 'bg-green-500' : 'bg-yellow-400'}`} />
+                  <div className={`h-1 ${task.is_rework ? 'bg-orange-500' : task.is_proposed ? 'bg-purple-500' : task.is_in_main_zone ? 'bg-green-500' : 'bg-yellow-400'}`} />
 
                   <div className="p-5">
                     <div className="flex items-start justify-between mb-3">
@@ -656,77 +993,192 @@ export default function HandymanFeed() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 mb-4">
+                    <div className="flex items-center gap-2 mb-4 flex-wrap">
+                      {task.is_rework && (
+                        <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-lg font-bold border border-orange-200">🔧 Relucrare</span>
+                      )}
                       {task.is_proposed && (
                         <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-lg font-medium">📩 Propus direct</span>
                       )}
-                      {task.is_in_main_zone ? (
+                      {!task.is_rework && (task.is_in_main_zone ? (
                         <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-lg font-medium">🟢 Zona ta</span>
                       ) : task.distance_km !== null && task.distance_km !== undefined && (
                         <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded-lg font-medium">🟡 Zona extinsă</span>
-                      )}
+                      ))}
                     </div>
 
-                    <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-                      <div>
-                        {task.budget ? (
-                          <p className="text-lg font-bold text-gray-800">{Number(task.budget).toLocaleString('ro-RO')} RON</p>
-                        ) : (
-                          <p className="text-sm text-gray-400">Buget nespecificat</p>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {task.my_offer_status === 'pending' ? (
-                          <span className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg text-sm font-medium">Ofertă trimisă</span>
-                        ) : task.my_offer_status === 'accepted' ? (
-                          <span className="px-4 py-2 bg-green-100 text-green-700 rounded-lg text-sm font-medium">Ofertă acceptată!</span>
-                        ) : task.my_offer_status === 'rejected' ? (
-                          <span className="px-4 py-2 bg-red-100 text-red-600 rounded-lg text-sm font-medium">Ofertă refuzată</span>
-                        ) : (
-                          <>
+                    {/* ── Bottom section ── */}
+                    {task.is_rework && canActOnTask(task) && !task.my_offer_status && reworkProposalForm[task.id] ? (
+                      /* Full-width rework form */
+                      <div onClick={e => e.stopPropagation()} className="pt-3 border-t border-gray-100">
+                        <div className="rounded-2xl bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-200 p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-bold text-orange-700 uppercase tracking-wide flex items-center gap-1.5">
+                              <RotateCcw className="w-3.5 h-3.5" /> Propune dată și oră
+                            </p>
                             {task.budget && (
-                              <button
-                                onClick={() => handleAcceptDirect(task)}
-                                disabled={acceptingId === task.id}
-                                className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition disabled:opacity-60"
-                              >
-                                {acceptingId === task.id
-                                  ? <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                                  : <CheckCircle className="w-3.5 h-3.5" />}
-                                Acceptă ({Number(task.budget).toLocaleString('ro-RO')} RON)
-                              </button>
+                              <span className="text-sm font-bold text-orange-700">{Number(task.budget).toLocaleString('ro-RO')} RON</span>
                             )}
+                          </div>
+
+                          {/* Date picker */}
+                          <input
+                            type="date"
+                            min={new Date().toISOString().split('T')[0]}
+                            value={reworkProposalForm[task.id]?.date || ''}
+                            onChange={e => {
+                              const d = e.target.value
+                              const todayStr = new Date().toISOString().split('T')[0]
+                              const nowMins = new Date().getHours() * 60 + new Date().getMinutes()
+                              const curTime = reworkProposalForm[task.id]?.time
+                              setReworkProposalForm(prev => ({
+                                ...prev,
+                                [task.id]: {
+                                  ...prev[task.id],
+                                  date: d,
+                                  time: d === todayStr && curTime && toSlotMins(curTime) <= nowMins ? '' : (curTime || ''),
+                                }
+                              }))
+                            }}
+                            className="w-full px-3 py-2 border border-orange-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                          />
+
+                          {/* Time slot grid */}
+                          {reworkProposalForm[task.id]?.date && (() => {
+                            const todayStr = new Date().toISOString().split('T')[0]
+                            const nowMins = new Date().getHours() * 60 + new Date().getMinutes()
+                            const slots = reworkProposalForm[task.id].date === todayStr
+                              ? REWORK_SLOTS.filter(t => toSlotMins(t) > nowMins)
+                              : REWORK_SLOTS
+                            if (slots.length === 0) return (
+                              <p className="text-xs text-orange-600 italic">Nu mai sunt ore disponibile azi — alege altă zi.</p>
+                            )
+                            return (
+                              <div>
+                                <p className="text-xs font-medium text-orange-600 mb-2">
+                                  Ora <span className="font-normal text-orange-400">(opțional)</span>
+                                </p>
+                                <div className="grid grid-cols-5 gap-1.5">
+                                  {slots.map(t => (
+                                    <button
+                                      key={t}
+                                      type="button"
+                                      onClick={() => setReworkProposalForm(prev => ({
+                                        ...prev,
+                                        [task.id]: { ...prev[task.id], time: t === prev[task.id]?.time ? '' : t }
+                                      }))}
+                                      className={`py-2 rounded-xl text-xs font-semibold border transition-all
+                                        ${reworkProposalForm[task.id]?.time === t
+                                          ? 'bg-orange-500 text-white border-orange-500 shadow-sm'
+                                          : 'bg-white border-orange-200 text-gray-700 hover:border-orange-400 hover:text-orange-600'
+                                        }`}
+                                    >
+                                      {t}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )
+                          })()}
+
+                          {/* Note */}
+                          <input
+                            type="text"
+                            placeholder="Notă opțională..."
+                            value={reworkProposalForm[task.id]?.note || ''}
+                            onChange={e => setReworkProposalForm(prev => ({ ...prev, [task.id]: { ...prev[task.id], note: e.target.value } }))}
+                            className="w-full px-3 py-2 border border-orange-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                          />
+
+                          {/* Actions */}
+                          <div className="flex gap-2 pt-1">
                             <button
-                              onClick={() => {
-                                setSelectedTask(task)
-                                setRequestMode('negotiate')
-                                setOfferForm(prev => ({ ...prev, proposed_price: task.budget || '' }))
-                                setShowOfferModal(true)
-                              }}
-                              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition"
-                            >
-                              <Send className="w-3.5 h-3.5" /> Negociază
-                            </button>
+                              onClick={() => setReworkProposalForm(prev => { const n = { ...prev }; delete n[task.id]; return n })}
+                              className="flex-1 py-2 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-white transition font-medium"
+                            >Anulează</button>
                             <button
-                              onClick={() => {
-                                setSelectedTask(task)
-                                setRequestMode('message')
-                                setOfferForm(prev => ({
-                                  ...prev,
-                                  proposed_price: prev.proposed_price || task.budget || '',
-                                  message: `Salut! Sunt interesat de taskul „${task.title}". Putem discuta detaliile?`,
-                                }))
-                                setShowOfferModal(true)
-                              }}
-                              className="w-9 h-9 border border-gray-200 rounded-lg flex items-center justify-center hover:bg-gray-50 transition"
+                              onClick={() => handleSubmitReworkProposal(task)}
+                              disabled={!reworkProposalForm[task.id]?.date || submittingProposal === task.id}
+                              className="flex-[2] flex items-center justify-center gap-1.5 py-2 bg-orange-500 text-white rounded-xl text-sm font-bold hover:bg-orange-600 disabled:opacity-50 transition shadow-sm"
                             >
-                              <MessageSquare className="w-4 h-4 text-gray-400" />
+                              {submittingProposal === task.id
+                                ? <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                                : <><Send className="w-3.5 h-3.5" /> Trimite propunerea</>}
                             </button>
-                          </>
-                        )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      /* Normal footer row: budget + action buttons */
+                      <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                        <div>
+                          {task.budget ? (
+                            <p className="text-lg font-bold text-gray-800">{Number(task.budget).toLocaleString('ro-RO')} RON</p>
+                          ) : (
+                            <p className="text-sm text-gray-400">Buget nespecificat</p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {task.my_offer_status === 'pending' ? (
+                            <span className="px-4 py-2 bg-yellow-100 text-yellow-700 rounded-lg text-sm font-medium">Ofertă trimisă</span>
+                          ) : task.my_offer_status === 'accepted' ? (
+                            <span className="px-4 py-2 bg-green-100 text-green-700 rounded-lg text-sm font-medium">Ofertă acceptată!</span>
+                          ) : task.my_offer_status === 'rejected' ? (
+                            <span className="px-4 py-2 bg-red-100 text-red-600 rounded-lg text-sm font-medium">Ofertă refuzată</span>
+                          ) : !canActOnTask(task) ? (
+                            <span className="flex items-center gap-1.5 px-4 py-2 bg-gray-100 text-gray-400 rounded-lg text-sm font-medium cursor-not-allowed" title="Nu ai un skill aprobat pentru această categorie">
+                              <Lock className="w-3.5 h-3.5" /> Skill necesar
+                            </span>
+                          ) : task.is_rework ? (
+                            /* Rework collapsed: open form or message */
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setReworkProposalForm(prev => ({ ...prev, [task.id]: { date: '', time: '', note: '' } }))}
+                                className="flex items-center gap-1.5 px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition"
+                              >
+                                <RotateCcw className="w-3.5 h-3.5" />
+                                {task.budget ? `Propune dată (${Number(task.budget).toLocaleString('ro-RO')} RON)` : 'Propune dată'}
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setSelectedTask(task); setRequestMode('message'); setOfferForm(prev => ({ ...prev, proposed_price: prev.proposed_price || task.budget || '', message: `Salut! Sunt interesat de relucrarea „${task.title}". Putem discuta detaliile?` })); setShowOfferModal(true) }}
+                                className="w-9 h-9 border border-gray-200 rounded-lg flex items-center justify-center hover:bg-gray-50 transition"
+                              >
+                                <MessageSquare className="w-4 h-4 text-gray-400" />
+                              </button>
+                            </div>
+                          ) : (
+                            /* Regular task */
+                            <>
+                              {!!task.budget && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleAcceptDirect(task) }}
+                                  disabled={acceptingId === task.id}
+                                  className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition disabled:opacity-60"
+                                >
+                                  {acceptingId === task.id
+                                    ? <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                                    : <CheckCircle className="w-3.5 h-3.5" />}
+                                  Acceptă ({Number(task.budget).toLocaleString('ro-RO')} RON)
+                                </button>
+                              )}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setSelectedTask(task); setRequestMode('negotiate'); setOfferForm(prev => ({ ...prev, proposed_price: task.budget || '' })); setShowOfferModal(true) }}
+                                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition"
+                              >
+                                <Send className="w-3.5 h-3.5" /> {task.budget ? 'Negociază' : 'Propune preț'}
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setSelectedTask(task); setRequestMode('message'); setOfferForm(prev => ({ ...prev, proposed_price: prev.proposed_price || task.budget || '', message: `Salut! Sunt interesat de taskul „${task.title}". Putem discuta detaliile?` })); setShowOfferModal(true) }}
+                                className="w-9 h-9 border border-gray-200 rounded-lg flex items-center justify-center hover:bg-gray-50 transition"
+                              >
+                                <MessageSquare className="w-4 h-4 text-gray-400" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -735,9 +1187,17 @@ export default function HandymanFeed() {
         ) : (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center">
             <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="font-bold text-gray-800 mb-2">Niciun task disponibil</h3>
+            <h3 className="font-bold text-gray-800 mb-2">
+              {(handymanProfile?.verification_level ?? 1) < 2
+                ? 'Feed indisponibil — Nivel 1'
+                : 'Niciun task disponibil'}
+            </h3>
             <p className="text-sm text-gray-500 mb-4">
-              Nu există taskuri în zona ta momentan. Încearcă să extinzi raza de căutare.
+              {(handymanProfile?.verification_level ?? 1) < 2
+                ? 'Trebuie să ajungi la Nivel 2 (Meșter verificat) pentru a accesa feed-ul. Încarcă documentele de identitate + cazier și adaugă un skill de nivel scăzut.'
+                : (handymanProfile?.verification_level ?? 1) < 4
+                  ? 'Nu există taskuri de risc scăzut în zona ta. Extinde zona sau avansează la Nivel 4 pentru taskuri de risc mediu.'
+                  : 'Nu există taskuri în zona ta momentan. Încearcă să extinzi raza de căutare.'}
             </p>
             <button
               onClick={() => {
