@@ -81,13 +81,13 @@ function ReserveButton({ service, handyman, onBook, size = 'sm' }) {
 
   // Unavailable — still bookable but with tooltip warning
   return (
-    <div className="relative">
+    <div className={`relative ${size !== 'sm' ? 'flex-1' : ''}`}>
       <button
         onClick={handleClick}
         onMouseEnter={() => setShowTip(true)}
         onMouseLeave={() => setShowTip(false)}
         className={`flex items-center justify-center gap-1.5 bg-gray-400 text-white rounded-xl font-semibold hover:bg-gray-500 transition
-          ${size === 'sm' ? 'px-3 py-2 text-xs' : 'flex-1 py-2.5 text-sm'}`}
+          ${size === 'sm' ? 'px-3 py-2 text-xs' : 'w-full py-2.5 text-sm'}`}
       >
         <Calendar className="w-3.5 h-3.5" /> Rezervă
       </button>
@@ -121,6 +121,7 @@ export default function FindServices() {
   const [userId,           setUserId]           = useState(null)
   const [viewMode,         setViewMode]         = useState('grid')
   const [showFilters,      setShowFilters]      = useState(false)
+  const [pendingQuery,     setPendingQuery]     = useState('')
   const [searchQuery,      setSearchQuery]      = useState('')
   const [selectedCategory, setSelectedCategory] = useState('all')
   const [sortBy,           setSortBy]           = useState('score')
@@ -160,7 +161,7 @@ export default function FindServices() {
 
       let hpQuery = supabase
         .from('handyman_profiles')
-        .select('user_id, bio, hourly_rate, rating_avg, total_jobs_completed, is_available, is_verified, has_insurance, specialties, primary_city, primary_county, work_radius_km, cover_url')
+        .select('user_id, bio, hourly_rate, rating_avg, total_jobs_completed, is_available, is_verified, has_insurance, specialties, primary_city, primary_county, work_radius_km, cover_url, verification_level')
       if (city) hpQuery = hpQuery.eq('primary_city', city)
       const { data: hProfiles } = await hpQuery
       if (!hProfiles?.length) { setLoading(false); return }
@@ -240,7 +241,7 @@ export default function FindServices() {
   }, [handymen, searchQuery, selectedCategory, filters, sortBy])
 
   const featured = useMemo(() =>
-    handymen.filter(h => (h.rating_avg ?? 0) >= 4.7 && h.is_available)
+    handymen.filter(h => (h.verification_level ?? 1) >= 4 && h.is_available)
       .sort((a, b) => b.score - a.score).slice(0, 3),
     [handymen])
 
@@ -252,9 +253,12 @@ export default function FindServices() {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4)
   }, [handymen])
 
+  const applySearch = () => setSearchQuery(pendingQuery)
+
   const clearFilters = () => {
     setFilters({ availability: 'all', minRating: 0, maxPrice: '', verifiedOnly: false, insuredOnly: false })
     setSelectedCategory('all')
+    setPendingQuery('')
     setSearchQuery('')
   }
 
@@ -331,16 +335,32 @@ export default function FindServices() {
 
         {/* ── SEARCH + CONTROLS ── */}
         <div className="flex flex-col md:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Caută după nume, serviciu sau specialitate…"
-              className="w-full pl-11 pr-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
-            {searchQuery && (
-              <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2">
-                <X className="w-4 h-4 text-gray-400 hover:text-gray-600" />
-              </button>
-            )}
+          <div className="relative flex-1 flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={pendingQuery}
+                onChange={e => setPendingQuery(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && applySearch()}
+                placeholder="Caută după nume, serviciu sau specialitate…"
+                className="w-full pl-11 pr-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              />
+              {pendingQuery && (
+                <button onClick={() => { setPendingQuery(''); setSearchQuery('') }} className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <X className="w-4 h-4 text-gray-400 hover:text-gray-600" />
+                </button>
+              )}
+            </div>
+            <button
+              onClick={applySearch}
+              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition whitespace-nowrap
+                ${pendingQuery !== searchQuery
+                  ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
+                  : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+            >
+              <Search className="w-4 h-4" /> Caută
+            </button>
           </div>
 
           <select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)}
@@ -455,7 +475,7 @@ export default function FindServices() {
               <Award className="w-5 h-5 text-yellow-500" />
               <h2 className="text-base font-bold text-gray-800">Profesioniști Recomandați</h2>
               <span className="px-2 py-0.5 bg-yellow-50 text-yellow-600 text-xs font-semibold rounded-full border border-yellow-100">
-                Rating 4.7+ · Experiență dovedită
+                Nivel 4+ · Verificați și de încredere
               </span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

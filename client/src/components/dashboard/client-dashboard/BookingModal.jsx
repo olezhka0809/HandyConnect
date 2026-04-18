@@ -113,6 +113,101 @@ export default function BookingModal({ service, handyman, userId, onClose, onSuc
   const [email,       setEmail]       = useState('')
   const [notes,       setNotes]       = useState('')
 
+  // Handyman schedule + availability
+  const [handymanSchedule,  setHandymanSchedule]  = useState(null)  // {mon:[{from,to}],...}
+  const [travelBuffer,      setTravelBufferVal]   = useState(30)
+  const [calendarBlocks,    setCalendarBlocks]    = useState([])     // blocks for selected date
+  const [availableTimes,    setAvailableTimes]    = useState(TIME_SLOTS)
+  const [dayNotWorking,     setDayNotWorking]     = useState(false)
+
+  const DAY_KEYS = ['sun','mon','tue','wed','thu','fri','sat']
+
+  // Load handyman schedule once
+  useEffect(() => {
+    if (!handyman?.user_id) return
+    supabase
+      .from('handyman_schedule')
+      .select('schedule, travel_buffer_min')
+      .eq('handyman_id', handyman.user_id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setHandymanSchedule(data.schedule)
+          setTravelBufferVal(data.travel_buffer_min ?? 30)
+        }
+      })
+  }, [handyman?.user_id])
+
+  // When date changes, load blocks and compute available times
+  useEffect(() => {
+    if (!date) { setAvailableTimes(TIME_SLOTS); setDayNotWorking(false); return }
+
+    const jsDay = new Date(date + 'T12:00:00').getDay()
+    const dayKey = DAY_KEYS[jsDay]
+    const daySlots = handymanSchedule?.[dayKey] ?? null
+
+    // Check if handyman works that day
+    if (handymanSchedule && (!daySlots || daySlots.length === 0)) {
+      setDayNotWorking(true)
+      setAvailableTimes([])
+      setTime('')
+      return
+    }
+    setDayNotWorking(false)
+
+    // Load blocks for that date
+    supabase
+      .from('handyman_calendar_blocks')
+      .select('start_time, end_time, block_type')
+      .eq('handyman_id', handyman.user_id)
+      .eq('date', date)
+      .then(({ data: blocks }) => {
+        const blks = blocks ?? []
+        setCalendarBlocks(blks)
+
+        // Compute available slots from schedule
+        const timeToMin = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+        const minToTime = m => `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`
+
+        let available = []
+
+        if (daySlots && daySlots.length > 0) {
+          // For each schedule window, find free sub-windows, then extract hourly/half-hourly starts
+          daySlots.forEach(slot => {
+            let cursor = timeToMin(slot.from)
+            const windowEnd = timeToMin(slot.to)
+
+            // Sort blocks that overlap this window
+            const overlapping = blks
+              .filter(b => timeToMin(b.end_time.slice(0,5)) > cursor && timeToMin(b.start_time.slice(0,5)) < windowEnd)
+              .sort((a, b) => timeToMin(a.start_time.slice(0,5)) - timeToMin(b.start_time.slice(0,5)))
+
+            for (const blk of overlapping) {
+              const bStart = timeToMin(blk.start_time.slice(0,5))
+              const bEnd   = timeToMin(blk.end_time.slice(0,5))
+              if (cursor < bStart) {
+                // Free window: cursor → bStart
+                for (let t = cursor; t < bStart - 30; t += 60) {
+                  available.push(minToTime(t))
+                }
+              }
+              cursor = Math.max(cursor, bEnd)
+            }
+            // Remaining free time after last block
+            for (let t = cursor; t < windowEnd - 30; t += 60) {
+              available.push(minToTime(t))
+            }
+          })
+        } else {
+          // No schedule data — show all times
+          available = TIME_SLOTS
+        }
+
+        setAvailableTimes([...new Set(available)].sort())
+        if (time && !available.includes(time)) setTime('')
+      })
+  }, [date, handymanSchedule, handyman?.user_id])
+
   // prefill contact from profile
   useEffect(() => {
     if (!userId) return
@@ -295,28 +390,52 @@ export default function BookingModal({ service, handyman, userId, onClose, onSuc
                 />
               </div>
 
-              {/* time slots */}
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">
-                  <Clock className="w-4 h-4 inline mr-1.5 text-gray-400" />
-                  Ora dorită *
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {TIME_SLOTS.map(t => (
-                    <button
-                      key={t}
-                      onClick={() => setTime(t)}
-                      className={`py-2.5 rounded-xl text-sm font-medium border transition-all
-                        ${time === t
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                          : 'border-gray-200 text-gray-600 hover:border-blue-400 hover:text-blue-600'
-                        }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
+              {/* day not working warning */}
+              {dayNotWorking && (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700">
+                    <strong>Handymanul nu lucrează în această zi.</strong> Alege o altă dată disponibilă în programul său.
+                  </p>
                 </div>
-              </div>
+              )}
+
+              {/* time slots */}
+              {!dayNotWorking && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">
+                    <Clock className="w-4 h-4 inline mr-1.5 text-gray-400" />
+                    Ora dorită *
+                    {date && handymanSchedule && (
+                      <span className="ml-2 text-xs font-normal text-gray-400">
+                        ({availableTimes.length} sloturi disponibile)
+                      </span>
+                    )}
+                  </label>
+                  {availableTimes.length === 0 && date ? (
+                    <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl text-center">
+                      <p className="text-sm text-gray-500">Nicio oră disponibilă în această zi.</p>
+                      <p className="text-xs text-gray-400 mt-1">Ziua este complet ocupată. Alege altă dată.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 gap-2">
+                      {availableTimes.map(t => (
+                        <button
+                          key={t}
+                          onClick={() => setTime(t)}
+                          className={`py-2.5 rounded-xl text-sm font-medium border transition-all
+                            ${time === t
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                              : 'border-gray-200 text-gray-600 hover:border-blue-400 hover:text-blue-600'
+                            }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* urgency */}
               <div>
