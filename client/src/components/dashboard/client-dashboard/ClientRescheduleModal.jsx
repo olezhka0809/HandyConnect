@@ -6,9 +6,19 @@ import {
 } from 'lucide-react'
 
 const TIME_SLOTS = [
-  '08:00','09:00','10:00','11:00','12:00',
-  '13:00','14:00','15:00','16:00','17:00',
+  '07:00','07:30','08:00','08:30','09:00','09:30',
+  '10:00','10:30','11:00','11:30','12:00','12:30',
+  '13:00','13:30','14:00','14:30','15:00','15:30',
+  '16:00','16:30','17:00','17:30','18:00','18:30','19:00',
 ]
+
+const TODAY_STR  = new Date().toISOString().split('T')[0]
+const toMins     = t => { const [h, m] = t.split(':'); return parseInt(h) * 60 + parseInt(m) }
+const availSlots = (date) => {
+  if (date !== TODAY_STR) return TIME_SLOTS
+  const nowMins = new Date().getHours() * 60 + new Date().getMinutes()
+  return TIME_SLOTS.filter(t => toMins(t) > nowMins)
+}
 
 function fmtDate(d) {
   if (!d) return '—'
@@ -54,7 +64,7 @@ export default function ClientRescheduleModal({ request, jobTitle, onClose, onUp
           type: 'task_accepted',
           title: 'Reprogramare acceptată!',
           body: `Clientul a acceptat reprogramarea pentru ${fmtDate(request.proposed_date)} la ${request.proposed_time}.`,
-          data: { job_id: request.job_id, job_type: request.job_type, redirect: '/handyman/jobs' },
+          data: { job_id: request.job_id, job_type: request.job_type, redirect: '/handyman/jobs?tab=reschedule' },
         })
       }
 
@@ -186,8 +196,13 @@ export default function ClientRescheduleModal({ request, jobTitle, onClose, onUp
                   <Calendar className="w-4 h-4 inline mr-1 text-gray-400" />
                   Data ta alternativă *
                 </label>
-                <input type="date" value={counterDate} onChange={e => setCounterDate(e.target.value)}
-                  min={new Date(Date.now() + 86400000).toISOString().split('T')[0]}
+                <input type="date" value={counterDate}
+                  onChange={e => {
+                    const d = e.target.value
+                    setCounterDate(d)
+                    if (d === TODAY_STR && counterTime && toMins(counterTime) <= new Date().getHours() * 60 + new Date().getMinutes()) setCounterTime('')
+                  }}
+                  min={new Date().toISOString().split('T')[0]}
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
               </div>
 
@@ -197,7 +212,7 @@ export default function ClientRescheduleModal({ request, jobTitle, onClose, onUp
                   Ora ta *
                 </label>
                 <div className="grid grid-cols-4 gap-2">
-                  {TIME_SLOTS.map(t => (
+                  {availSlots(counterDate).map(t => (
                     <button key={t} onClick={() => setCounterTime(t)}
                       className={`py-2.5 rounded-xl text-sm font-medium border transition-all
                         ${counterTime === t ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:border-blue-400'}`}>
