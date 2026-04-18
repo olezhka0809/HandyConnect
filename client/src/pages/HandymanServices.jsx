@@ -5,7 +5,7 @@ import HandymanServiceModal from '../components/handyman-services/HandymanServic
 import {
   Plus, Edit2, Trash2, Star, Briefcase, DollarSign,
   Clock, Settings, BarChart3, X, CheckCircle, Loader2,
-  ToggleRight, ToggleLeft, Flame, Tag, ChevronRight, ImagePlus
+  ToggleRight, ToggleLeft, Flame, Tag, ChevronRight, ImagePlus, Award
 } from 'lucide-react'
 
 const emptyService = {
@@ -18,7 +18,8 @@ export default function HandymanServices() {
   const [services,     setServices]     = useState([])
   const [loading,      setLoading]      = useState(true)
   const [handymanId,   setHandymanId]   = useState(null)
-  const [categories,   setCategories]   = useState([])
+  const [categories,      setCategories]      = useState([])
+  const [skillCategories, setSkillCategories] = useState(null) // null = loading, [] = no skills, [ids] = allowed
   const [detailId,     setDetailId]     = useState(null)   // modal detail
   const [showAddModal, setShowAddModal] = useState(false)
   const [newService,   setNewService]   = useState({ ...emptyService })
@@ -37,15 +38,25 @@ export default function HandymanServices() {
       if (!user) return
       setHandymanId(user.id)
 
-      const [{ data: svcData }, { data: catsData }] = await Promise.all([
+      const [{ data: svcData }, { data: catsData }, { data: skillData }] = await Promise.all([
         supabase.from('handyman_services')
           .select('*, categories(id, name, icon)')
           .eq('handyman_id', user.id)
           .order('created_at', { ascending: false }),
         supabase.from('categories').select('id, name, icon').eq('is_active', true).order('name'),
+        supabase.from('user_skills')
+          .select('skills(category_id, name)')
+          .eq('user_id', user.id)
+          .eq('status', 'approved'),
       ])
       setServices(svcData ?? [])
       setCategories(catsData ?? [])
+
+      // derive allowed category IDs from approved skills
+      const catIds = (skillData ?? [])
+        .map(s => s.skills?.category_id)
+        .filter(Boolean)
+      setSkillCategories([...new Set(catIds)])
       setLoading(false)
     }
     load()
@@ -400,6 +411,17 @@ export default function HandymanServices() {
             </div>
 
             <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* Skill context banner */}
+              {skillCategories !== null && skillCategories.length > 0 && (
+                <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-700">
+                  <CheckCircle className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold">Categoriile disponibile sunt bazate pe skillurile tale aprobate.</span>
+                    {' '}Poți adăuga servicii în categoriile corespunzătoare skillurilor verificate.
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-bold text-gray-800 mb-1.5">Titlu *</label>
                 <input type="text" value={newService.title}
@@ -472,13 +494,31 @@ export default function HandymanServices() {
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm" />
               </div>
               <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1.5">Categorie</label>
-                <select value={newService.category_id ?? ''}
-                  onChange={e => setNewService(p => ({ ...p, category_id: e.target.value }))}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
-                  <option value="">Selectează categoria</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-sm font-bold text-gray-800">Categorie</label>
+                  {skillCategories !== null && skillCategories.length > 0 && (
+                    <span className="text-xs text-blue-600 font-medium">
+                      Bazat pe skillurile tale aprobate
+                    </span>
+                  )}
+                </div>
+                {skillCategories !== null && skillCategories.length === 0 ? (
+                  <div className="w-full px-4 py-3 border border-yellow-200 bg-yellow-50 rounded-xl text-sm text-yellow-700">
+                    Nu ai skilluri aprobate. Aprobă skilluri în{' '}
+                    <strong>Profilul meu → Skilluri & Certificări</strong>{' '}
+                    pentru a adăuga servicii pe categorii specifice.
+                  </div>
+                ) : (
+                  <select value={newService.category_id ?? ''}
+                    onChange={e => setNewService(p => ({ ...p, category_id: e.target.value }))}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                    <option value="">Selectează categoria</option>
+                    {(skillCategories?.length > 0
+                      ? categories.filter(c => skillCategories.includes(c.id))
+                      : categories
+                    ).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                )}
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>

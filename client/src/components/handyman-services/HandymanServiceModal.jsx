@@ -12,10 +12,23 @@ import {
 
 // ─── category icon map ────────────────────────────────────────────────────────
 const ICON_MAP = {
-  bolt: Plug, Droplets, 'paint-roller': Paintbrush, square: Square,
-  wallpaper: Layers, pipe: Wrench, Wrench, Zap, Paintbrush, Hammer,
-  Sparkles, Flower2, Sofa, CircuitBoard, Lightbulb, Building2,
-  MoreHorizontal, Droplets, Plug,
+  bolt: Plug,
+  droplets: Droplets,
+  'paint-roller': Paintbrush,
+  square: Square,
+  wallpaper: Layers,
+  pipe: Wrench,
+  zap: Zap,
+  paintbrush: Paintbrush,
+  hammer: Hammer,
+  sparkles: Sparkles,
+  flower: Flower2,
+  sofa: Sofa,
+  circuit: CircuitBoard,
+  lightbulb: Lightbulb,
+  building: Building2,
+  more: MoreHorizontal,
+  plug: Plug,
 }
 function CatIcon({ iconName, className = 'w-4 h-4' }) {
   const Icon = ICON_MAP[iconName] ?? Wrench
