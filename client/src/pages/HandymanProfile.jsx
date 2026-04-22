@@ -20,6 +20,14 @@ function StarRow({ rating, size = 'sm' }) {
   )
 }
 
+function getTrustBadge(score) {
+  if (score == null) return null
+  if (score >= 86) return { label: 'Top Rated',              emoji: '🏆', cls: 'bg-yellow-50 text-yellow-700 border-yellow-200' }
+  if (score >= 61) return { label: 'Profesionist verificat', emoji: '⭐', cls: 'bg-green-50 text-green-700 border-green-200' }
+  if (score >= 31) return { label: 'Verificat',              emoji: '✓',  cls: 'bg-blue-50 text-blue-700 border-blue-200' }
+  return                   { label: 'Nou pe platformă',      emoji: '🔵', cls: 'bg-gray-50 text-gray-500 border-gray-200' }
+}
+
 export default function HandymanProfile() {
   const { slug } = useParams()
   const navigate  = useNavigate()
@@ -36,10 +44,11 @@ export default function HandymanProfile() {
   const [notFound,    setNotFound]    = useState(false)
 
   // data
-  const [handyman,  setHandyman]  = useState(null)   // handyman_profiles row
-  const [profile,   setProfile]   = useState(null)   // profiles row (name, avatar)
-  const [services,  setServices]  = useState([])
-  const [reviews,   setReviews]   = useState([])
+  const [handyman,       setHandyman]       = useState(null)
+  const [profile,        setProfile]        = useState(null)
+  const [services,       setServices]       = useState([])
+  const [reviews,        setReviews]        = useState([])
+  const [approvedSkills, setApprovedSkills] = useState([])
 
   // ── load ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -109,7 +118,15 @@ export default function HandymanProfile() {
         setNotHelpfulSet(new Set((nhData ?? []).map(h => h.review_id)))
       }
 
-      // 5. favorit status
+      // 5. approved skills (public: only approved ones)
+      const { data: skillsData } = await supabase
+        .from('user_skills')
+        .select('skill_id, skills(name, category, requires_certificate)')
+        .eq('user_id', matched.id)
+        .eq('status', 'approved')
+      setApprovedSkills(skillsData ?? [])
+
+      // 6. favorit status
       if (user?.id) {
         const { data: favRow } = await supabase
           .from('favorite_handymen')
@@ -208,6 +225,11 @@ export default function HandymanProfile() {
 
   const DAYS_LABEL = { luni:'Luni', marti:'Marți', miercuri:'Miercuri', joi:'Joi', vineri:'Vineri', sambata:'Sâmbătă', duminica:'Duminică' }
 
+  const vLevel    = handyman?.verification_level ?? 0
+  const trustBadge = getTrustBadge(handyman?.trust_score ?? 0)
+  const certSkills = approvedSkills.filter(s => s.skills?.requires_certificate)
+  const otherSkills = approvedSkills.filter(s => s.skills && !s.skills.requires_certificate)
+
   const tabs = [
     { id:'servicii',        label:'Servicii' },
     { id:'recenzii',        label:`Recenzii (${reviews.length})` },
@@ -287,10 +309,15 @@ export default function HandymanProfile() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
                   <h1 className="text-xl font-bold text-gray-800">{fullName}</h1>
-                  {handyman?.is_verified&&<CheckCircle className="w-5 h-5 text-blue-500"/>}
-                  {handyman?.has_insurance&&<Shield className="w-5 h-5 text-green-500"/>}
+                  {vLevel >= 1 && <CheckCircle className="w-5 h-5 text-blue-500" title="Identitate verificată"/>}
+                  {vLevel >= 2 && <Shield className="w-5 h-5 text-green-500" title="Background verificat"/>}
+                  {trustBadge && (
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${trustBadge.cls}`}>
+                      {trustBadge.emoji} {trustBadge.label}
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 mb-3">
@@ -540,25 +567,41 @@ export default function HandymanProfile() {
                       </div>
                     )}
                     <div>
-                      <p className="text-sm font-bold text-gray-700 mb-3">Încredere & Siguranță</p>
-                      <div className="grid grid-cols-3 gap-3">
-                        {[
-                          { cond:handyman?.is_verified,             icon:CheckCircle, label:'Identitate verificată', color:'text-blue-600 bg-blue-50 border-blue-100' },
-                          { cond:handyman?.has_insurance,           icon:Shield,      label:'Asigurat',              color:'text-green-600 bg-green-50 border-green-100' },
-                          { cond:handyman?.background_check_consent,icon:Award,       label:'Background verificat',  color:'text-purple-600 bg-purple-50 border-purple-100' },
-                        ].map((b,i)=>(
-                          <div key={i} className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border text-center ${b.cond?b.color:'text-gray-300 bg-gray-50 border-gray-100'}`}>
-                            <b.icon className="w-5 h-5"/>
-                            <p className="text-xs font-semibold leading-tight">{b.label}</p>
-                            <p className="text-[10px]">{b.cond?'✓ Confirmat':'Neprecizat'}</p>
+                      <p className="text-sm font-bold text-gray-700 mb-3">Verificare & Siguranță</p>
+                      <div className="space-y-2">
+                        <div className={`flex items-center gap-3 p-3 rounded-xl border ${vLevel >= 1 ? 'bg-blue-50 border-blue-100' : 'bg-gray-50 border-gray-100'}`}>
+                          <CheckCircle className={`w-5 h-5 flex-shrink-0 ${vLevel >= 1 ? 'text-blue-500' : 'text-gray-300'}`}/>
+                          <div>
+                            <p className={`text-sm font-semibold ${vLevel >= 1 ? 'text-blue-700' : 'text-gray-400'}`}>Identitate verificată</p>
+                            <p className={`text-xs ${vLevel >= 1 ? 'text-blue-500' : 'text-gray-400'}`}>{vLevel >= 1 ? '✓ Confirmat de HandyConnect' : 'Nedisponibil'}</p>
                           </div>
-                        ))}
+                        </div>
+                        <div className={`flex items-center gap-3 p-3 rounded-xl border ${vLevel >= 2 ? 'bg-green-50 border-green-100' : 'bg-gray-50 border-gray-100'}`}>
+                          <Shield className={`w-5 h-5 flex-shrink-0 ${vLevel >= 2 ? 'text-green-500' : 'text-gray-300'}`}/>
+                          <div>
+                            <p className={`text-sm font-semibold ${vLevel >= 2 ? 'text-green-700' : 'text-gray-400'}`}>Background verificat</p>
+                            <p className={`text-xs ${vLevel >= 2 ? 'text-green-500' : 'text-gray-400'}`}>{vLevel >= 2 ? '✓ Cazier judiciar aprobat' : 'Nedisponibil'}</p>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    {handyman?.certifications&&(
-                      <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Certificări & Licențe</p>
-                        <p className="text-sm text-gray-700">{handyman.certifications}</p>
+
+                    {/* Approved skills */}
+                    {approvedSkills.length > 0 && (
+                      <div>
+                        <p className="text-sm font-bold text-gray-700 mb-3">Skilluri & Certificări</p>
+                        <div className="flex flex-wrap gap-2">
+                          {certSkills.map(s => (
+                            <span key={s.skill_id} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200">
+                              <Award className="w-3 h-3"/> {s.skills?.name} <span className="text-purple-400">(certificat)</span>
+                            </span>
+                          ))}
+                          {otherSkills.map(s => (
+                            <span key={s.skill_id} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
+                              <CheckCircle className="w-3 h-3"/> {s.skills?.name}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     )}
                     <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
@@ -614,18 +657,27 @@ export default function HandymanProfile() {
 
             {/* trust */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-              <h3 className="font-bold text-gray-800 text-sm mb-3">Încredere & Siguranță</h3>
+              {trustBadge && (
+                <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border mb-4 ${trustBadge.cls}`}>
+                  <span>{trustBadge.emoji}</span> {trustBadge.label}
+                </div>
+              )}
+              <h3 className="font-bold text-gray-800 text-sm mb-3">Verificări</h3>
               <div className="space-y-2.5">
-                {[
-                  { cond:handyman?.is_verified,             icon:CheckCircle, label:'Verificare identitate', color:'text-blue-500' },
-                  { cond:handyman?.has_insurance,           icon:Shield,      label:'Asigurare de răspundere', color:'text-green-500' },
-                  { cond:handyman?.background_check_consent,icon:Award,       label:'Background verificat',   color:'text-purple-500' },
-                ].map((b,i)=>(
-                  <div key={i} className={`flex items-center gap-2.5 text-sm ${b.cond?'text-gray-700':'text-gray-300'}`}>
-                    <b.icon className={`w-4 h-4 ${b.cond?b.color:'text-gray-300'}`}/>
-                    {b.label}
+                <div className={`flex items-center gap-2.5 text-sm ${vLevel >= 1 ? 'text-gray-700' : 'text-gray-300'}`}>
+                  <CheckCircle className={`w-4 h-4 ${vLevel >= 1 ? 'text-blue-500' : 'text-gray-300'}`}/>
+                  Identitate verificată
+                </div>
+                <div className={`flex items-center gap-2.5 text-sm ${vLevel >= 2 ? 'text-gray-700' : 'text-gray-300'}`}>
+                  <Shield className={`w-4 h-4 ${vLevel >= 2 ? 'text-green-500' : 'text-gray-300'}`}/>
+                  Background verificat
+                </div>
+                {approvedSkills.length > 0 && (
+                  <div className="flex items-center gap-2.5 text-sm text-gray-700">
+                    <Award className="w-4 h-4 text-purple-500"/>
+                    {approvedSkills.length} skill{approvedSkills.length > 1 ? 'uri' : ''} verificat{approvedSkills.length > 1 ? 'e' : ''}
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>
