@@ -51,7 +51,6 @@ export default function PostTask() {
     contactMethod: 'phone',
     specialInstructions: '',
     budget: '',
-    insuranceRequired: false,
     notifyFavorites: false,
     notifySpecific: false,
     proposedHandymen: [],
@@ -80,7 +79,7 @@ export default function PostTask() {
       // Încarcă categoriile din DB
       const { data: catsData } = await supabase
         .from('categories')
-        .select('id, name, icon')
+        .select('id, name, icon, default_risk_level')
         .eq('is_active', true)
         .order('name')
       setDbCategories(catsData || [])
@@ -141,7 +140,13 @@ export default function PostTask() {
   const handleSubmit = async () => {
     setLoading(true)
     try {
-      const categoryId = dbCategories.find(c => c.name === form.category)?.id || null
+      const categoryObj = dbCategories.find(c => c.name === form.category)
+      const categoryId = categoryObj?.id ?? null
+      if (!categoryId) {
+        alert('Selectează o categorie înainte de a trimite task-ul.')
+        setLoading(false)
+        return
+      }
 
       const { data: taskData, error: taskError } = await supabase
         .from('tasks')
@@ -166,7 +171,6 @@ export default function PostTask() {
           contact_phone: form.contactPhone,
           contact_method: form.contactMethod,
           special_instructions: form.specialInstructions || null,
-          insurance_required: form.insuranceRequired,
           is_public: true,
           proposed_to: form.proposedHandymen,
         })
@@ -303,7 +307,7 @@ const toggleHandyman = (id) => {
             <div className="space-y-6">
               {/* Category */}
               <div>
-                <h3 className="font-bold text-gray-800 mb-3">Selectează categoria</h3>
+                <h3 className="font-bold text-gray-800 mb-3">Selectează categoria <span className="text-red-500">*</span></h3>
                 <div className="grid grid-cols-2 gap-2">
                   {dbCategories.map((cat) => (
                     <button
@@ -311,30 +315,25 @@ const toggleHandyman = (id) => {
                       onClick={() => update('category', cat.name)}
                       className={`flex items-center gap-2 px-4 py-3 rounded-xl border-2 text-left text-sm transition-all
                         ${form.category === cat.name
-                          ? 'border-blue-600 bg-blue-50 text-blue-600'
+                          ? 'border-blue-600 bg-blue-50 text-blue-600 font-medium'
                           : 'border-gray-200 text-gray-700 hover:border-blue-300'
                         }
                       `}
                     >
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0
-                        ${form.category === cat.name ? 'border-blue-600' : 'border-gray-300'}
-                      `}>
-                        {form.category === cat.name && <div className="w-2 h-2 bg-blue-600 rounded-full" />}
-                      </div>
-                      {cat.name}
+                      {cat.icon && <span className="text-base leading-none flex-shrink-0">{cat.icon}</span>}
+                      <span className="flex-1">{cat.name}</span>
+                      {form.category === cat.name && (
+                        <div className="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
+                          <div className="w-2 h-2 bg-white rounded-full" />
+                        </div>
+                      )}
                     </button>
                   ))}
                 </div>
 
-                {form.category === 'Altele' && (
-                  <input
-                    type="text"
-                    value={form.customCategory}
-                    onChange={(e) => update('customCategory', e.target.value)}
-                    placeholder="Specifică tipul de serviciu..."
-                    className="w-full mt-3 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                )}
+                <p className="mt-3 text-xs text-gray-400 text-center">
+                  Nu găsești categoria potrivită? Alege <strong className="text-gray-500">Reparații generale</strong> sau <strong className="text-gray-500">Construcții</strong>.
+                </p>
               </div>
 
               {/* Title */}
@@ -451,8 +450,8 @@ const toggleHandyman = (id) => {
                 <div className="space-y-2">
                   {[
                     { value: 'normal', icon: Clock, label: 'Normal', desc: 'Programare standard, fără grabă', color: '' },
-                    { value: 'urgent', icon: Zap, label: 'Urgent', desc: 'Finalizare necesară în 24-48 ore', color: 'text-yellow-600' },
-                    { value: 'emergency', icon: AlertTriangle, label: 'Urgență', desc: 'Atenție imediată necesară', color: 'text-red-600' },
+                    { value: 'urgent', icon: Zap, label: 'Urgență medie', desc: 'Finalizare necesară în 24-48 ore', color: 'text-yellow-600' },
+                    { value: 'emergency', icon: AlertTriangle, label: 'Urgență critică', desc: 'Atenție imediată necesară', color: 'text-red-600' },
                   ].map((level) => (
                     <button
                       key={level.value}
@@ -609,23 +608,6 @@ const toggleHandyman = (id) => {
                 />
               </div>
 
-              <button
-                onClick={() => update('insuranceRequired', !form.insuranceRequired)}
-                className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-all
-                  ${form.insuranceRequired ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}
-                `}
-              >
-                <div className={`w-5 h-5 rounded border-2 flex items-center justify-center
-                  ${form.insuranceRequired ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}
-                `}>
-                  {form.insuranceRequired && <CheckCircle className="w-3 h-3 text-white" />}
-                </div>
-                <div>
-                  <p className="font-medium text-gray-800">Solicită dovada asigurării</p>
-                  <p className="text-xs text-gray-500">Solicită handymanului documentația de asigurare actuală</p>
-                </div>
-              </button>
-
               {/* Summary preview */}
               <div className="bg-gray-50 rounded-xl p-5">
                 <h4 className="font-bold text-gray-800 mb-3">Rezumat task</h4>
@@ -641,7 +623,7 @@ const toggleHandyman = (id) => {
                   <div className="flex justify-between">
                     <span className="text-gray-500">Urgență:</span>
                     <span className={`font-medium ${form.urgency === 'emergency' ? 'text-red-600' : form.urgency === 'urgent' ? 'text-yellow-600' : 'text-green-600'}`}>
-                      {form.urgency === 'normal' ? 'Normal' : form.urgency === 'urgent' ? 'Urgent' : 'Urgență'}
+                      {form.urgency === 'normal' ? 'Normal' : form.urgency === 'urgent' ? 'Urgență medie' : 'Urgență critică'}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -932,7 +914,7 @@ const toggleHandyman = (id) => {
                     ...prev,
                     category: '', customCategory: '', title: '', description: '',
                     keywords: [], photos: [], urgency: 'normal',
-                    accessInstructions: '', specialInstructions: '', insuranceRequired: false,
+                    accessInstructions: '', specialInstructions: '',
                   }))
                   setPhotoPreviews([])
                 }}
