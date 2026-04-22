@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabase'
 import CityAutocomplete from '../components/CityAutocomplete'
+import ScheduleEditor, { EMPTY_SCHEDULE } from '../components/ScheduleEditor'
 import logo from '../assets/Logo_pin.png'
 import {
   ChevronLeft, ChevronRight, Upload, CheckCircle, Camera,
@@ -47,6 +48,8 @@ export default function HandymanOnboarding() {
     workRadius: 'Sub 15 km',
     certifications: '',
     availableDays: [],
+    schedule: EMPTY_SCHEDULE,
+    travelBuffer: 30,
     hasInsurance: false,
     consentBackground: false,
     avatarFile: null,
@@ -136,11 +139,23 @@ export default function HandymanOnboarding() {
 
   const saveStep4 = async () => {
     setLoading(true)
+    // Salvează programul în handyman_schedule
+    await supabase.from('handyman_schedule').upsert({
+      handyman_id: user.id,
+      schedule: form.schedule,
+      travel_buffer_min: form.travelBuffer,
+    }, { onConflict: 'handyman_id' })
+
+    // Salvează zilele active și preferințele în profil
+    const activeDays = Object.entries(form.schedule)
+      .filter(([, slots]) => slots.length > 0)
+      .map(([day]) => day)
     await supabase.from('handyman_profiles').update({
-      available_days: form.availableDays,
+      available_days: activeDays,
       has_insurance: form.hasInsurance,
       background_check_consent: form.consentBackground,
-    }).eq('id', user.id)
+    }).eq('user_id', user.id)
+
     setLoading(false)
     setStep(5)
   }
@@ -322,33 +337,15 @@ export default function HandymanOnboarding() {
             </div>
           )}
 
-          {/* STEP 4: Availability */}
+          {/* STEP 4: Schedule */}
           {step === 4 && (
-            <div className="space-y-6">
-              <div>
-                <h3 className="font-bold text-gray-800 mb-3">Zile disponibile</h3>
-                <div className="grid grid-cols-4 gap-2">
-                  {daysOfWeek.map((day) => (
-                    <button
-                      key={day}
-                      onClick={() => toggleDay(day)}
-                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 text-sm transition-all
-                        ${form.availableDays.includes(day)
-                          ? 'border-blue-600 bg-blue-50 text-blue-600'
-                          : 'border-gray-200 text-gray-700 hover:border-blue-300'
-                        }
-                      `}
-                    >
-                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0
-                        ${form.availableDays.includes(day) ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}
-                      `}>
-                        {form.availableDays.includes(day) && <CheckCircle className="w-3 h-3 text-white" />}
-                      </div>
-                      {day}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            <div className="space-y-5">
+              <ScheduleEditor
+                schedule={form.schedule}
+                travelBuffer={form.travelBuffer}
+                onChange={(sched, buf) => setForm(p => ({ ...p, schedule: sched, travelBuffer: buf }))}
+                compact
+              />
 
               <button
                 onClick={() => update('hasInsurance', !form.hasInsurance)}
@@ -498,7 +495,7 @@ export default function HandymanOnboarding() {
           )}
           {step === 4 && (
             <button onClick={saveStep4}
-              disabled={loading}
+              disabled={loading || Object.values(form.schedule).every(s => s.length === 0)}
               className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
               {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
             </button>
