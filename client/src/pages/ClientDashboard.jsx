@@ -7,15 +7,29 @@ import LocationBanner from '../components/LocationBanner'
 import ClientTaskDetailModal from '../components/dashboard/client-dashboard/ClientTaskDetailModal'
 import ClientRescheduleModal from '../components/dashboard/client-dashboard/ClientRescheduleModal'
 import ClientBookingDetailModal from '../components/dashboard/client-dashboard/ClientBookingDetailModal'
+import ReworkConfirmModal from '../components/dashboard/client-dashboard/ReworkConfirmModal'
 import {
   Plus, Calendar, CheckCircle, Clock, DollarSign,
   Star, MessageSquare, Heart, Briefcase, Search, Bell,
   ArrowRight, MapPin, CalendarClock, TrendingDown,
   AlertCircle, ChevronRight, Loader2, XCircle, RefreshCw,
-  DollarSign as MoneyIcon
+  DollarSign as MoneyIcon, ShieldAlert, Wrench, Scale, User,
+  RotateCcw, Send, ChevronDown
 } from 'lucide-react'
 
-const TIME_SLOTS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00']
+const TIME_SLOTS = [
+  '07:00','07:30','08:00','08:30','09:00','09:30',
+  '10:00','10:30','11:00','11:30','12:00','12:30',
+  '13:00','13:30','14:00','14:30','15:00','15:30',
+  '16:00','16:30','17:00','17:30','18:00','18:30','19:00',
+]
+const CD_TODAY_STR  = new Date().toISOString().split('T')[0]
+const cdToMins      = t => { const [h, m] = t.split(':'); return parseInt(h) * 60 + parseInt(m) }
+const cdAvailSlots  = (date) => {
+  if (date !== CD_TODAY_STR) return TIME_SLOTS
+  const nowMins = new Date().getHours() * 60 + new Date().getMinutes()
+  return TIME_SLOTS.filter(t => cdToMins(t) > nowMins)
+}
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -31,6 +45,15 @@ const STATUS_COLOR = {
   cancelled:        'bg-red-100 text-red-700',
   open:        'bg-gray-100 text-gray-600',
   assigned:    'bg-blue-100 text-blue-700',
+  // Dispute / rework statuses
+  under_admin_review:  'bg-purple-100 text-purple-700',
+  rework_in_progress:  'bg-orange-100 text-orange-700',
+  rework_completed:    'bg-green-100 text-green-700',
+  rework_marketplace:  'bg-sky-100 text-sky-700',
+  reassign_rework:     'bg-sky-100 text-sky-700',
+  refund_full:         'bg-teal-100 text-teal-700',
+  refund_partial:      'bg-teal-100 text-teal-700',
+  forced_accepted:     'bg-gray-100 text-gray-600',
 }
 const STATUS_LABEL = {
   pending:     'În așteptare',
@@ -44,6 +67,15 @@ const STATUS_LABEL = {
   cancelled:        'Anulat',
   open:        'Deschis',
   assigned:    'Alocat',
+  // Dispute / rework statuses
+  under_admin_review:  'La administrator',
+  rework_in_progress:  'Relucrare în desfășurare',
+  rework_completed:    'Relucrare finalizată',
+  rework_marketplace:  'Relucrare în așteptare',
+  reassign_rework:     'Relucrare postată',
+  refund_full:         'Rambursare integrală',
+  refund_partial:      'Rambursare parțială',
+  forced_accepted:     'Acceptat de admin',
 }
 
 function fmtDate(d) {
@@ -109,7 +141,7 @@ function RescheduleCard({ req, jobTitle, onUpdated }) {
           type: 'task_accepted',
           title: 'Reprogramare acceptată!',
           body: `Clientul a acceptat reprogramarea pentru ${fmtLong(req.proposed_date)} la ${req.proposed_time}.`,
-          data: { job_id: req.job_id, job_type: req.job_type, redirect: '/handyman/jobs' },
+          data: { job_id: req.job_id, job_type: req.job_type, redirect: '/handyman/jobs?tab=reschedule' },
         })
       }
       onUpdated?.()
@@ -220,11 +252,16 @@ function RescheduleCard({ req, jobTitle, onUpdated }) {
       {!isOutgoing && mode === 'counter' && (
         <div className="space-y-3 border border-blue-100 rounded-xl p-4 bg-blue-50">
           <p className="text-sm font-bold text-blue-700">Propune o altă dată</p>
-          <input type="date" value={counterDate} onChange={e => setCounterDate(e.target.value)}
-            min={new Date(Date.now() + 86400000).toISOString().split('T')[0]}
+          <input type="date" value={counterDate}
+            onChange={e => {
+              const d = e.target.value
+              setCounterDate(d)
+              if (d === CD_TODAY_STR && counterTime && cdToMins(counterTime) <= new Date().getHours() * 60 + new Date().getMinutes()) setCounterTime('')
+            }}
+            min={new Date().toISOString().split('T')[0]}
             className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white"/>
           <div className="grid grid-cols-4 gap-2">
-            {TIME_SLOTS.map(t => (
+            {cdAvailSlots(counterDate).map(t => (
               <button key={t} type="button" onClick={() => setCounterTime(t)}
                 className={`py-2 rounded-xl text-xs font-medium border transition-all
                   ${counterTime === t ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-400'}`}>
@@ -307,14 +344,20 @@ export default function ClientDashboard() {
   const [favorites,     setFavorites]       = useState([])
   const [recentActivity,setRecentActivity]  = useState([])
   const routerLocation = useRouterLocation()
-  const [tab,           setTab]             = useState(routerLocation.state?.tab || 'overview')
+  const _initSearch = new URLSearchParams(routerLocation.search)
+  const [tab,           setTab]             = useState(_initSearch.get('tab') || routerLocation.state?.tab || 'overview')
+  const [offersSubtab,  setOffersSubtab]    = useState(routerLocation.state?.offersSubtab || 'price')
   const [loading,       setLoading]         = useState(true)
 
   useEffect(() => {
-    if (routerLocation.state?.tab)           setTab(routerLocation.state.tab)
+    const sp = new URLSearchParams(routerLocation.search)
+    const tabFromUrl = sp.get('tab')
+    if (tabFromUrl)                          setTab(tabFromUrl)
+    else if (routerLocation.state?.tab)      setTab(routerLocation.state.tab)
+    if (routerLocation.state?.offersSubtab)  setOffersSubtab(routerLocation.state.offersSubtab)
     if (routerLocation.state?.filter)        setTaskStatusFilter(routerLocation.state.filter)
     if (routerLocation.state?.bookingFilter) setBookingStatusFilter(routerLocation.state.bookingFilter)
-  }, [routerLocation.state])
+  }, [routerLocation.search, routerLocation.state])
 
   const [detailTaskId,    setDetailTaskId]    = useState(null)
   const [detailBookingId, setDetailBookingId] = useState(null)
@@ -337,10 +380,17 @@ export default function ClientDashboard() {
   const [rescheduleRequests, setRescheduleRequests] = useState([])
   const [rescheduleModal,    setRescheduleModal]    = useState(null) // { request, jobTitle }
 
+  // Disputes for this client
+  const [disputes,            setDisputes]            = useState([])
+  const [disputeStatusFilter, setDisputeStatusFilter] = useState('all')
+  const [reworkConfirmDispute, setReworkConfirmDispute] = useState(null) // dispute obj pentru mini-modal
+
   // Negotiations (price offers from handymen on client's tasks/bookings)
   const [negotiations, setNegotiations] = useState([])
   const [negLoading,   setNegLoading]   = useState(false)
   const [acceptedOffer, setAcceptedOffer] = useState(null) // { handymanName, price, taskTitle }
+  // Rework scheduling proposals (from handymen, date/time negotiation)
+  const [reworkProposals, setReworkProposals] = useState([])
 
   // Track which offer IDs have been seen (persisted per-user in localStorage)
   const [seenOfferIds, setSeenOfferIds] = useState(() => {
@@ -369,19 +419,28 @@ export default function ClientDashboard() {
     setCurrentUserId(user.id)
 
     const [
-      profileRes, statsRes, bookingsRes, tasksRes, favsRes, reschedRes, categoriesRes
+      profileRes, statsRes, bookingsRes, tasksRes, favsRes, reschedRes, categoriesRes, disputesRes
     ] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', user.id).single(),
       supabase.from('client_dashboard_stats').select('*').eq('client_id', user.id).single(),
       supabase.from('bookings').select('*, handyman:handyman_id(first_name,last_name,avatar_url), service:service_id(title,base_price,categories(name))')
         .eq('client_id', user.id).order('created_at', { ascending: false }).limit(20),
       supabase.from('tasks').select('*, handyman:handyman_id(first_name,last_name,avatar_url), category:category_id(name)')
-        .eq('client_id', user.id).eq('is_archived', false).order('created_at', { ascending: false }).limit(20),
+        .eq('client_id', user.id).eq('is_archived', false).order('created_at', { ascending: false }).limit(100),
       supabase.from('favorite_handymen').select('*, handyman:handyman_id(first_name,last_name,avatar_url,city,handyman_profiles!inner(rating_avg,total_jobs_completed,specialties))')
         .eq('client_id', user.id),
       // Reschedule requests pending for this client (both directions)
       supabase.from('reschedule_requests').select('*').eq('client_id', user.id).in('status', ['pending', 'pending_client', 'pending_handyman']),
       supabase.from('categories').select('name').eq('is_active', true).order('name'),
+      // All disputes opened by this client (all statuses, filtered client-side)
+      supabase.from('task_disputes')
+        .select(`id, status, created_at, details, rework_deadline, client_rework_confirmed_at,
+          handyman_response, handyman_response_at, admin_decision, timeline,
+          task:task_id(id, title, status, final_price, is_rework, rework_level),
+          handyman:handyman_id(first_name, last_name, avatar_url),
+          rejection_reasons!reason_id(name)`)
+        .eq('client_id', user.id)
+        .order('created_at', { ascending: false }),
     ])
 
     const tksData = tasksRes.data ?? []
@@ -389,21 +448,29 @@ export default function ClientDashboard() {
 
     // task_offers: offers from handymen on client tasks (pending or negotiating)
     let taskOffersData = []
+    let reworkProposalsData = []
     if (taskIds.length > 0) {
-      const { data: toData } = await supabase
-        .from('task_offers')
-        .select('*, handyman:handyman_id(first_name,last_name,avatar_url,city,average_rating)')
-        .in('task_id', taskIds)
-        .in('status', ['pending', 'negotiating'])
-        .order('created_at', { ascending: false })
-      // Deduplicate: one row per (task_id + handyman_id) — keep the LATEST (most recent price)
+      const [toRes, rwpRes] = await Promise.all([
+        supabase.from('task_offers')
+          .select('*, handyman:handyman_id(first_name,last_name,avatar_url,city,average_rating)')
+          .in('task_id', taskIds)
+          .in('status', ['pending', 'negotiating'])
+          .order('created_at', { ascending: false }),
+        supabase.from('rework_proposals')
+          .select('*, handyman:handyman_id(id,first_name,last_name,avatar_url,city), task:task_id(id,title,budget,is_rework)')
+          .in('task_id', taskIds)
+          .in('status', ['pending', 'accepted', 'declined'])
+          .order('updated_at', { ascending: false }),
+      ])
+      // Deduplicate task_offers: one row per (task_id + handyman_id) — keep the LATEST
       const seen = new Set()
-      taskOffersData = (toData ?? []).filter(row => {
+      taskOffersData = (toRes.data ?? []).filter(row => {
         const key = `${row.task_id}:${row.handyman_id}`
         if (seen.has(key)) return false
         seen.add(key)
         return true
       })
+      reworkProposalsData = rwpRes.data ?? []
     }
 
     setProfile(profileRes.data)
@@ -412,7 +479,9 @@ export default function ClientDashboard() {
     setTasks(tksData)
     setFavorites(favsRes.data ?? [])
     setRescheduleRequests(reschedRes.data ?? [])
+    setDisputes(disputesRes.data ?? [])
     setNegotiations(taskOffersData)
+    setReworkProposals(reworkProposalsData)
     setAllCategoryNames((categoriesRes.data ?? []).map(c => c.name).filter(Boolean))
 
     // Activity feed
@@ -486,6 +555,22 @@ export default function ClientDashboard() {
         body: `Clientul a acceptat oferta ta de ${neg.proposed_price} RON pentru „${taskTitle}"`,
         data: { task_id: neg.task_id },
       })
+
+      // Creare conversație automată dacă nu există deja
+      const { data: existingConv } = await supabase
+        .from('conversations')
+        .select('id')
+        .eq('client_id', currentUserId)
+        .eq('handyman_id', neg.handyman_id)
+        .eq('task_id', neg.task_id)
+        .maybeSingle()
+      if (!existingConv) {
+        await supabase.from('conversations').insert({
+          client_id:   currentUserId,
+          handyman_id: neg.handyman_id,
+          task_id:     neg.task_id,
+        })
+      }
 
       await loadDashboardData()
     } finally { setNegLoading(false) }
@@ -597,6 +682,7 @@ export default function ClientDashboard() {
 
   const pendingRescheduleCount = rescheduleRequests.length
   const pendingOffersCount     = negotiations.filter(n => !seenOfferIds.includes(n.id)).length
+  const pendingDisputesCount   = disputes.filter(d => d.task?.status === 'awaiting_client_rework_choice').length
 
   const totalSpent =
     bookings.filter(b => ['completed','client_approved'].includes(b.status)).reduce((sum, b) => sum + (Number(b.total) || 0), 0) +
@@ -652,6 +738,8 @@ export default function ClientDashboard() {
       const offersCount = getOffersForTask(t.id).length
       const isAwaiting = t.status === 'open' || t.status === 'pending'
       const isActive = ['assigned', 'accepted', 'confirmed', 'in_progress', 'delayed'].includes(t.status)
+      const REWORK_STATUSES = ['rework_pending','rework_accepted','rework_in_progress','rework_completed','rework_scheduled']
+      const isRework = t.is_rework === true || REWORK_STATUSES.includes(t.status)
 
       if (taskStatusFilter === 'awaiting' && !isAwaiting) return false
       if (taskStatusFilter === 'active' && !isActive) return false
@@ -659,6 +747,7 @@ export default function ClientDashboard() {
       if (taskStatusFilter === 'client_approved' && t.status !== 'client_approved') return false
       if (taskStatusFilter === 'client_rejected' && t.status !== 'client_rejected') return false
       if (taskStatusFilter === 'cancelled' && t.status !== 'cancelled') return false
+      if (taskStatusFilter === 'rework' && !isRework) return false
       // Hide approved/rejected from "all" default view to avoid clutter — they have their own filters
       if (taskStatusFilter === 'all' && (t.status === 'client_approved' || t.status === 'client_rejected')) return false
 
@@ -731,8 +820,9 @@ export default function ClientDashboard() {
             { id:'bookings',   label:'Rezervări' },
             { id:'tasks',      label:'Taskuri' },
             { id:'favorites',  label:'Favoriți' },
-            { id:'offers',     label:'Oferte', badge: pendingOffersCount },
-            { id:'reschedule', label:'Reprogramări', badge: pendingRescheduleCount, badgeColor:'red' },
+            { id:'offers',     label:'Oferte',       badge: pendingOffersCount },
+            { id:'reschedule', label:'Reprogramări',  badge: pendingRescheduleCount, badgeColor:'red' },
+            { id:'disputes',   label:'Dispute',       badge: pendingDisputesCount,   badgeColor:'red' },
           ].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={`relative px-4 py-2 rounded-lg text-sm font-medium transition
@@ -1134,6 +1224,10 @@ export default function ClientDashboard() {
                   { id: 'awaiting', label: 'În așteptare' },
                   { id: 'active', label: 'Active' },
                   { id: 'completed', label: 'Finalizate' },
+                  { id: 'rework', label: 'Relucrări', count: tasks.filter(t => {
+                      const reworkSt = ['rework_pending','rework_accepted','rework_in_progress','rework_completed','rework_scheduled']
+                      return (t.is_rework || reworkSt.includes(t.status)) && !['client_approved','forced_accepted','cancelled','refund_full','refund_partial'].includes(t.status)
+                    }).length },
                   { id: 'client_approved', label: 'Acceptate' },
                   { id: 'client_rejected', label: 'Respinse' },
                   { id: 'cancelled', label: 'Anulate' },
@@ -1141,13 +1235,20 @@ export default function ClientDashboard() {
                   <button
                     key={f.id}
                     onClick={() => setTaskStatusFilter(f.id)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
+                    className={`relative px-3 py-1.5 rounded-full text-xs font-semibold border transition ${
                       taskStatusFilter === f.id
                         ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                        : f.id === 'rework' && f.count > 0
+                          ? 'bg-sky-50 text-sky-700 border-sky-300 hover:border-sky-500'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
                     }`}
                   >
                     {f.label}
+                    {f.count > 0 && taskStatusFilter !== f.id && (
+                      <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-sky-500 text-white text-[9px] font-black rounded-full flex items-center justify-center">
+                        {f.count}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -1227,9 +1328,23 @@ export default function ClientDashboard() {
                                 ? 'Anulat de client'
                                 : 'Task anulat'
                             : 'Task în așteptarea unui handyman'
+                  const REWORK_ST = ['rework_pending','rework_accepted','rework_in_progress','rework_completed','rework_scheduled']
+                  const cardIsRework = t.is_rework === true || REWORK_ST.includes(t.status)
+                  const reworkLabel = t.status === 'open' ? 'Task repostat — în așteptarea unui meșter'
+                    : ['assigned','in_progress','rework_in_progress','rework_pending','rework_accepted','rework_scheduled'].includes(t.status) ? 'Relucrare în desfășurare'
+                    : ['rework_completed','completed'].includes(t.status) ? 'Relucrare finalizată'
+                    : 'Task de relucrare'
                   return (
-                    <div key={t.id} className={`p-5 hover:bg-gray-50 transition cursor-pointer ${hasBorder ? 'border-l-4 border-orange-400' : ''}`}
+                    <div key={t.id} className={`p-5 hover:bg-gray-50 transition cursor-pointer ${
+                      cardIsRework ? 'border-l-4 border-sky-400' : hasBorder ? 'border-l-4 border-orange-400' : ''
+                    }`}
                       onClick={() => setDetailTaskId(t.id)}>
+                      {cardIsRework && (
+                        <div className="flex items-center gap-1.5 mb-2 px-2.5 py-1.5 bg-sky-50 border border-sky-200 rounded-lg">
+                          <RefreshCw className="w-3.5 h-3.5 text-sky-600 flex-shrink-0" />
+                          <p className="text-xs font-semibold text-sky-700">{reworkLabel}</p>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between mb-2">
                         <div>
                           <p className="font-medium text-gray-800">{t.title}</p>
@@ -1309,6 +1424,27 @@ export default function ClientDashboard() {
                         </div>
                       )}
 
+                      {/* Dispute banner — task entered a dispute state */}
+                      {['disputed','rework_in_progress','rework_completed','under_admin_review','forced_accepted','refund_partial','refund_full'].includes(t.status) && (
+                        <div className="mt-3 pt-3 border-t border-red-100" onClick={e => e.stopPropagation()}>
+                          <button
+                            onClick={() => setTab('disputes')}
+                            className="w-full flex items-center justify-center gap-1.5 py-2 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-lg hover:bg-red-100 transition"
+                          >
+                            <ShieldAlert className="w-3.5 h-3.5" />
+                            {{
+                              disputed:           'Dispută deschisă — Vezi detalii',
+                              rework_in_progress: 'Relucrare în curs — Confirmă data',
+                              rework_completed:   'Relucrare finalizată — Confirmă',
+                              under_admin_review: 'Caz la admin — Urmărește decizia',
+                              forced_accepted:    'Acceptare forțată de admin',
+                              refund_partial:     'Rambursare parțială acordată',
+                              refund_full:        'Rambursare integrală acordată',
+                            }[t.status] ?? 'Dispută activă — Vezi în tab Dispute'}
+                          </button>
+                        </div>
+                      )}
+
                       {/* Badges */}
                       {(offers.length > 0 || resched) && (
                         <div className="flex flex-wrap gap-2">
@@ -1350,87 +1486,115 @@ export default function ClientDashboard() {
         )}
 
         {/* ══════════════════════════════════════════════════════
-            TAB: OFFERS (Oferte de preț de la handymani)
+            TAB: OFFERS (Oferte de preț + Propuneri relucrare)
         ══════════════════════════════════════════════════════ */}
         {tab === 'offers' && (
           <div className="space-y-6">
-            <div className="flex items-center gap-3 mb-2">
-              <TrendingDown className="w-5 h-5 text-orange-500"/>
-              <h2 className="text-lg font-bold text-gray-800">Oferte de Preț</h2>
-              <span className="px-2.5 py-0.5 bg-orange-100 text-orange-700 text-xs font-bold rounded-full">
-                {negotiations.length} oferte active
-              </span>
-              {pendingOffersCount > 0 && (
-                <span className="px-2.5 py-0.5 bg-orange-500 text-white text-xs font-bold rounded-full animate-pulse">
-                  {pendingOffersCount} noi
-                </span>
-              )}
+            {/* Subtab switcher */}
+            <div className="flex gap-2 bg-gray-100 p-1 rounded-2xl w-fit">
+              <button
+                onClick={() => setOffersSubtab('price')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                  offersSubtab === 'price'
+                    ? 'bg-white text-orange-600 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <TrendingDown className="w-4 h-4"/>
+                Oferte de Preț
+                {negotiations.length > 0 && (
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    offersSubtab === 'price' ? 'bg-orange-100 text-orange-700' : 'bg-gray-200 text-gray-600'
+                  }`}>{negotiations.length}</span>
+                )}
+                {pendingOffersCount > 0 && (
+                  <span className="px-1.5 py-0.5 bg-orange-500 text-white rounded-full text-[10px] font-bold animate-pulse">{pendingOffersCount} noi</span>
+                )}
+              </button>
+              <button
+                onClick={() => setOffersSubtab('rework')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
+                  offersSubtab === 'rework'
+                    ? 'bg-white text-orange-600 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <CalendarClock className="w-4 h-4"/>
+                Propuneri Relucrare
+                {reworkProposals.length > 0 && (
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    offersSubtab === 'rework' ? 'bg-orange-100 text-orange-700' : 'bg-gray-200 text-gray-600'
+                  }`}>{reworkProposals.filter(p => p.status === 'pending').length}</span>
+                )}
+              </button>
             </div>
 
-            {Object.keys(negsByJob).length === 0 ? (
-              <div className="bg-white rounded-2xl border border-gray-100 p-16 text-center">
-                <TrendingDown className="w-12 h-12 text-gray-200 mx-auto mb-4"/>
-                <h3 className="font-bold text-gray-700 mb-1">Nicio ofertă activă</h3>
-                <p className="text-sm text-gray-400">Ofertele de preț de la handymani vor apărea aici.</p>
-              </div>
-            ) : (
-              Object.entries(negsByJob).map(([jobId, offers]) => {
-                const task    = tasks.find(t => t.id === jobId)
-                const booking = bookings.find(b => b.id === jobId)
-                const jobTitle = task?.title ?? booking?.service?.title ?? `Job #${jobId.slice(0,6)}`
-                const originalPrice = task?.budget ?? booking?.total
-                const hasUnseen = offers.some(n => !seenOfferIds.includes(n.id))
-
-                return (
-                  <div key={jobId} className={`bg-white rounded-2xl shadow-sm overflow-hidden transition-all
-                    ${hasUnseen
-                      ? 'border-2 border-orange-400 ring-1 ring-orange-200'
-                      : 'border border-gray-100'}`}>
-                    {/* Job header */}
-                    <div className={`px-6 py-4 border-b flex items-center justify-between
-                      ${hasUnseen ? 'bg-orange-50 border-orange-100' : 'bg-gray-50 border-gray-100'}`}>
-                      <div>
-                        <p className="font-bold text-gray-800">{jobTitle}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <StatusBadge status={task?.status ?? booking?.status}/>
-                          {originalPrice && (
-                            <span className="text-xs text-gray-500">
-                              Buget original: <strong className="text-gray-700">{fmtPrice(originalPrice)}</strong>
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {hasUnseen && (
-                          <span className="px-2 py-0.5 bg-orange-500 text-white text-[10px] font-black rounded-full uppercase tracking-wide">
-                            Nou
-                          </span>
-                        )}
-                        <span className={`px-2.5 py-1 text-xs font-bold rounded-full
-                          ${hasUnseen ? 'bg-orange-200 text-orange-800' : 'bg-orange-100 text-orange-700'}`}>
-                          {offers.length} {offers.length === 1 ? 'ofertă' : 'oferte'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Offers list */}
-                    <div className="divide-y divide-gray-50">
-                      {offers.map(neg => (
-                        <OfferRow
-                          key={neg.id}
-                          neg={neg}
-                          originalPrice={originalPrice}
-                          loading={negLoading}
-                          isUnseen={!seenOfferIds.includes(neg.id)}
-                          onAccept={() => handleAcceptOffer(neg)}
-                          onReject={() => handleRejectOffer(neg)}
-                          onCounter={(price, msg, date, time) => handleCounterOffer(neg, price, msg, date, time)}
-                        />
-                      ))}
-                    </div>
+            {/* ── Subtab: Oferte de Preț ── */}
+            {offersSubtab === 'price' && (
+              <>
+                {negotiations.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-gray-100 p-16 text-center">
+                    <TrendingDown className="w-12 h-12 text-gray-200 mx-auto mb-4"/>
+                    <h3 className="font-bold text-gray-700 mb-1">Nicio ofertă activă</h3>
+                    <p className="text-sm text-gray-400">Ofertele de preț de la handymani vor apărea aici.</p>
                   </div>
-                )
-              })
+                ) : (
+                  <div className="space-y-4">
+                    {Object.entries(negsByJob).map(([taskId, negs]) => {
+                      const task = tasks.find(t => t.id === taskId)
+                      const booking = bookings.find(b => b.id === taskId)
+                      const jobTitle = task?.title ?? booking?.service?.title ?? `Job #${taskId?.slice(0,6)}`
+                      const originalPrice = task?.budget ?? booking?.total
+                      return (
+                        <div key={taskId} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                          <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                            <h4 className="font-semibold text-gray-800 text-sm">{jobTitle}</h4>
+                            <span className="text-xs text-gray-400">{negs.length} ofertă{negs.length !== 1 ? 'e' : ''}</span>
+                          </div>
+                          <div className="divide-y divide-gray-50">
+                            {negs.map(neg => (
+                              <OfferRow
+                                key={neg.id}
+                                neg={neg}
+                                taskTitle={jobTitle}
+                                originalPrice={originalPrice}
+                                loading={negLoading}
+                                isUnseen={!seenOfferIds.includes(neg.id)}
+                                onAccept={() => handleAcceptOffer(neg)}
+                                onReject={() => handleRejectOffer(neg)}
+                                onCounter={(price, msg, date, time) => handleCounterOffer(neg, price, msg, date, time)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ── Subtab: Propuneri Relucrare ── */}
+            {offersSubtab === 'rework' && (
+              <>
+                {reworkProposals.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-gray-100 p-16 text-center">
+                    <CalendarClock className="w-12 h-12 text-gray-200 mx-auto mb-4"/>
+                    <h3 className="font-bold text-gray-700 mb-1">Nicio propunere de relucrare</h3>
+                    <p className="text-sm text-gray-400">Propunerile de programare pentru relucrări vor apărea aici.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {reworkProposals.map(prop => (
+                      <ClientReworkProposalCard
+                        key={prop.id}
+                        proposal={prop}
+                        onRefresh={loadDashboardData}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -1468,6 +1632,294 @@ export default function ClientDashboard() {
             )}
           </div>
         )}
+
+        {/* ══════════════════════════════════════════════════════
+            TAB: DISPUTES
+        ══════════════════════════════════════════════════════ */}
+        {tab === 'disputes' && (() => {
+          // ── Status config ──────────────────────────────────────────────────
+          const DISPUTE_STATUS_CFG = {
+            open:                          { label: 'Deschis',                  cls: 'bg-red-100 text-red-700',       Icon: AlertCircle  },
+            dispute_contested:             { label: 'Contestat',                cls: 'bg-orange-100 text-orange-700', Icon: Scale        },
+            rework_accepted:               { label: 'Relucrare acceptată',      cls: 'bg-orange-100 text-orange-700', Icon: Wrench       },
+            rework_in_progress:            { label: 'Relucrare în curs',        cls: 'bg-blue-100 text-blue-700',     Icon: Wrench       },
+            rework_completed:              { label: 'Relucrare finalizată',      cls: 'bg-green-100 text-green-700',   Icon: CheckCircle  },
+            admin_review:                  { label: 'La administrator',          cls: 'bg-purple-100 text-purple-700', Icon: Scale        },
+            admin_review_required:         { label: 'La administrator',          cls: 'bg-purple-100 text-purple-700', Icon: Scale        },
+            under_admin_review:            { label: 'Analiză admin',             cls: 'bg-purple-100 text-purple-700', Icon: Scale        },
+            admin_escalated:               { label: 'Escaladat',                 cls: 'bg-purple-200 text-purple-800', Icon: Scale        },
+            admin_proposed_rework:         { label: 'Propunere relucrare',       cls: 'bg-yellow-100 text-yellow-700', Icon: Wrench       },
+            evidence_requested_client:     { label: 'Dovezi solicitate',         cls: 'bg-amber-100 text-amber-800 ring-1 ring-amber-400', Icon: AlertCircle },
+            evidence_requested_handyman:   { label: 'Dovezi la meșter',          cls: 'bg-amber-50 text-amber-700',    Icon: Scale        },
+            awaiting_client_rework_choice: { label: 'Alege cum continui',        cls: 'bg-amber-100 text-amber-700',   Icon: AlertCircle  },
+            handyman_declined_rework:      { label: 'Meșterul a refuzat',        cls: 'bg-red-200 text-red-800',       Icon: AlertCircle  },
+            resolved:                      { label: 'Rezolvat',                  cls: 'bg-green-100 text-green-700',   Icon: CheckCircle  },
+            closed:                        { label: 'Închis',                    cls: 'bg-gray-100 text-gray-500',     Icon: CheckCircle  },
+            forced_accepted:               { label: 'Plată eliberată',           cls: 'bg-gray-100 text-gray-600',     Icon: CheckCircle  },
+            refund_partial:                { label: 'Rambursare parțială',       cls: 'bg-teal-100 text-teal-700',     Icon: CheckCircle  },
+            refund_full:                   { label: 'Rambursare totală',         cls: 'bg-teal-100 text-teal-700',     Icon: CheckCircle  },
+            rework_marketplace:            { label: 'Alt meșter',                cls: 'bg-sky-100 text-sky-700',       Icon: Wrench       },
+            rejected:                      { label: 'Respins',                   cls: 'bg-gray-100 text-gray-500',     Icon: AlertCircle  },
+          }
+
+          // ── Filter groups ──────────────────────────────────────────────────
+          const FILTER_GROUPS = [
+            { id: 'all',      label: 'Toate',       statuses: null,
+              color: 'bg-gray-100 text-gray-700 hover:bg-gray-200',
+              activeColor: 'bg-gray-800 text-white' },
+            { id: 'open',     label: 'Deschise',    statuses: ['open'],
+              color: 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200',
+              activeColor: 'bg-red-600 text-white border-transparent' },
+            { id: 'rework',   label: 'Relucrare',   statuses: ['rework_accepted','rework_in_progress'],
+              color: 'bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200',
+              activeColor: 'bg-orange-500 text-white border-transparent' },
+            { id: 'admin',    label: 'La Admin',    statuses: ['admin_review','under_admin_review','dispute_contested','evidence_requested_client','evidence_requested_handyman','admin_escalated','admin_proposed_rework','handyman_declined_rework'],
+              color: 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200',
+              activeColor: 'bg-purple-600 text-white border-transparent' },
+            { id: 'resolved', label: 'Rezolvate',   statuses: ['resolved','closed','forced_accepted','refund_partial','refund_full','rework_marketplace'],
+              color: 'bg-green-50 text-green-700 hover:bg-green-100 border border-green-200',
+              activeColor: 'bg-green-600 text-white border-transparent' },
+            { id: 'rejected', label: 'Respinse',    statuses: ['rejected'],
+              color: 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200',
+              activeColor: 'bg-gray-500 text-white border-transparent' },
+          ]
+
+          // ── Filtered list ──────────────────────────────────────────────────
+          const activeGroup = FILTER_GROUPS.find(g => g.id === disputeStatusFilter)
+          const filteredDisputes = activeGroup?.statuses
+            ? disputes.filter(d => activeGroup.statuses.includes(d.status))
+            : disputes
+
+          // Count per group (only show badge if > 0)
+          const countFor = (g) => g.statuses ? disputes.filter(d => g.statuses.includes(d.status)).length : disputes.length
+
+          return (
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-1">
+                <ShieldAlert className="w-5 h-5 text-red-500"/>
+                <h2 className="text-lg font-bold text-gray-800">Disputele Mele</h2>
+                {pendingDisputesCount > 0 && (
+                  <span className="px-2.5 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">
+                    {pendingDisputesCount} {pendingDisputesCount === 1 ? 'necesită decizia ta' : 'necesită decizia ta'}
+                  </span>
+                )}
+                <span className="ml-auto text-xs text-gray-400">{disputes.length} total</span>
+              </div>
+
+              {/* Filter chips */}
+              <div className="flex flex-wrap gap-2">
+                {FILTER_GROUPS.map(g => {
+                  const cnt = countFor(g)
+                  if (g.id !== 'all' && cnt === 0) return null
+                  const isActive = disputeStatusFilter === g.id
+                  return (
+                    <button
+                      key={g.id}
+                      onClick={() => setDisputeStatusFilter(g.id)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all
+                        ${isActive ? g.activeColor : g.color}`}
+                    >
+                      {g.label}
+                      <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold
+                        ${isActive ? 'bg-white/25 text-white' : 'bg-white/70 text-gray-600'}`}>
+                        {cnt}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Cards */}
+              {filteredDisputes.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-gray-100 p-12 text-center">
+                  <ShieldAlert className="w-10 h-10 text-gray-200 mx-auto mb-3"/>
+                  <p className="text-sm font-medium text-gray-500">
+                    {disputes.length === 0 ? 'Nicio dispută deschisă' : 'Nicio dispută în această categorie'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {filteredDisputes.map(d => {
+                    const handymanName = d.handyman
+                      ? `${d.handyman.first_name ?? ''} ${d.handyman.last_name ?? ''}`.trim() || 'Handyman'
+                      : 'Handyman'
+                    const taskTitle = d.task?.title ?? `Task #${d.task?.id?.slice(0,6) ?? '—'}`
+
+                    const tl = (() => { try { return Array.isArray(d.timeline) ? d.timeline : JSON.parse(d.timeline ?? '[]') } catch { return [] } })()
+                    const clientProposed    = tl.find(e => e.event === 'client_proposed_new_rework_date')
+                    const handymanConfirmed = tl.find(e => e.event === 'handyman_confirmed_client_date')
+
+                    const hoursLeft = Math.max(0, Math.floor((new Date(d.created_at).getTime() + 24 * 3600_000 - Date.now()) / 3_600_000))
+                    const urgent    = d.status === 'open' && hoursLeft < 12
+                    const isResolved = ['resolved','closed','forced_accepted','refund_partial','refund_full','rework_marketplace'].includes(d.status)
+
+                    const { label: sLabel, cls: sCls, Icon: SIcon } = DISPUTE_STATUS_CFG[d.status]
+                      ?? { label: d.status, cls: 'bg-gray-100 text-gray-600', Icon: ShieldAlert }
+
+                    // stripe color
+                    const isLv2 = d.task?.is_rework === true && (d.task?.rework_level ?? 1) >= 2
+                    const needsClientAction = d.status === 'evidence_requested_client'
+
+                    const stripeColor = urgent ? 'bg-red-500'
+                      : needsClientAction ? 'bg-amber-400'
+                      : d.status === 'rework_accepted' || d.status === 'rework_in_progress' ? 'bg-orange-400'
+                      : ['admin_review','under_admin_review','dispute_contested','evidence_requested_handyman','admin_escalated'].includes(d.status) ? 'bg-purple-400'
+                      : isResolved ? 'bg-green-400'
+                      : 'bg-gray-300'
+
+                    return (
+                      <div key={d.id}
+                        onClick={() => setDetailTaskId(d.task?.id)}
+                        className={`bg-white rounded-2xl border shadow-sm overflow-hidden cursor-pointer hover:shadow-md transition-shadow
+                          ${urgent ? 'border-red-300' : needsClientAction ? 'border-amber-300' : isResolved ? 'border-green-200' : 'border-gray-200'}`}>
+                        <div className={`h-1 w-full ${stripeColor}`} />
+
+                        <div className="p-4 space-y-3">
+                          {/* Title + badge */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                              <p className="font-bold text-gray-800 text-sm leading-tight">{taskTitle}</p>
+                              {isLv2 && (
+                                <span className="flex-shrink-0 px-1.5 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-bold rounded border border-orange-200">Niv.2</span>
+                              )}
+                            </div>
+                            <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap flex-shrink-0 ${sCls}`}>
+                              <SIcon className="w-3 h-3"/> {sLabel}
+                            </span>
+                          </div>
+
+                          {/* Handyman */}
+                          <div className="flex items-center gap-2">
+                            {d.handyman?.avatar_url
+                              ? <img src={d.handyman.avatar_url} className="w-7 h-7 rounded-full object-cover flex-shrink-0"/>
+                              : <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0"><User className="w-3.5 h-3.5 text-blue-500"/></div>
+                            }
+                            <span className="text-xs text-gray-600">{handymanName}</span>
+                            {d.task?.final_price && (
+                              <span className="ml-auto text-xs font-bold text-gray-700">
+                                {Number(d.task.final_price).toLocaleString('ro-RO')} RON
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Reason */}
+                          {d.rejection_reasons?.name && (
+                            <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-2.5 py-1.5">
+                              Motiv: <span className="font-medium text-gray-700">{d.rejection_reasons.name}</span>
+                            </p>
+                          )}
+
+                          {/* Status-specific context */}
+                          {d.status === 'open' && (
+                            <div className={`flex items-center gap-2 rounded-lg px-2.5 py-2 ${urgent ? 'bg-red-50 border border-red-200' : 'bg-orange-50 border border-orange-100'}`}>
+                              <Clock className={`w-3.5 h-3.5 flex-shrink-0 ${urgent ? 'text-red-500' : 'text-orange-500'}`}/>
+                              <p className={`text-xs font-medium ${urgent ? 'text-red-700' : 'text-orange-700'}`}>
+                                {hoursLeft > 0 ? `Meșterul are ${hoursLeft}h să răspundă` : 'Termenul a expirat — caz escaladat'}
+                              </p>
+                            </div>
+                          )}
+
+                          {d.status === 'rework_accepted' && !d.client_rework_confirmed_at && !clientProposed && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setReworkConfirmDispute(d) }}
+                              className="w-full flex items-center gap-2 bg-orange-50 border border-orange-300 rounded-lg px-2.5 py-2 hover:bg-orange-100 transition text-left group"
+                            >
+                              <CalendarClock className="w-3.5 h-3.5 text-orange-500 flex-shrink-0"/>
+                              <p className="text-xs font-semibold text-orange-700">
+                                Confirmă data relucrării{d.rework_deadline ? ` — ${new Date(d.rework_deadline).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short' })}` : ''}
+                              </p>
+                              <span className="ml-auto text-xs text-orange-600 font-bold group-hover:translate-x-0.5 transition-transform">→</span>
+                            </button>
+                          )}
+
+                          {d.status === 'rework_accepted' && clientProposed && !handymanConfirmed && (
+                            <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-2">
+                              <Clock className="w-3.5 h-3.5 text-blue-500 flex-shrink-0"/>
+                              <p className="text-xs text-blue-700">Aștepți confirmarea meșterului pentru noua dată</p>
+                            </div>
+                          )}
+
+                          {d.status === 'rework_accepted' && d.client_rework_confirmed_at && (
+                            <div className="flex items-center gap-2 bg-green-50 border border-green-100 rounded-lg px-2.5 py-2">
+                              <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0"/>
+                              <p className="text-xs text-green-700 font-medium">Dată confirmată — relucrare programată</p>
+                            </div>
+                          )}
+
+                          {d.status === 'rework_in_progress' && (
+                            <div className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-lg px-2.5 py-2">
+                              <Wrench className="w-3.5 h-3.5 text-blue-500 flex-shrink-0"/>
+                              <p className="text-xs text-blue-700 font-medium">Meșterul lucrează la relucrare</p>
+                            </div>
+                          )}
+
+                          {(d.status === 'admin_review' || d.status === 'under_admin_review') && (
+                            <div className="flex items-center gap-2 bg-purple-50 border border-purple-100 rounded-lg px-2.5 py-2">
+                              <Scale className="w-3.5 h-3.5 text-purple-500 flex-shrink-0"/>
+                              <p className="text-xs text-purple-700">Un admin analizează cazul și va lua o decizie</p>
+                            </div>
+                          )}
+
+                          {d.status === 'evidence_requested_client' && (
+                            <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 rounded-lg px-2.5 py-2">
+                              <AlertCircle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0"/>
+                              <p className="text-xs font-semibold text-amber-700">Adminul solicită dovezi — deschide pentru a răspunde</p>
+                              <span className="ml-auto text-xs text-amber-600 font-bold">→</span>
+                            </div>
+                          )}
+
+                          {(d.status === 'dispute_contested' || d.status === 'evidence_requested_handyman') && (
+                            <div className="flex items-center gap-2 bg-purple-50 border border-purple-100 rounded-lg px-2.5 py-2">
+                              <Scale className="w-3.5 h-3.5 text-purple-500 flex-shrink-0"/>
+                              <p className="text-xs text-purple-700">
+                                {d.status === 'dispute_contested' ? 'Meșterul a contestat disputa — caz la admin' : 'Adminul a cerut dovezi de la meșter'}
+                              </p>
+                            </div>
+                          )}
+
+                          {(d.status === 'refund_partial' || d.status === 'refund_full') && (
+                            <div className="flex items-center gap-2 bg-teal-50 border border-teal-100 rounded-lg px-2.5 py-2">
+                              <CheckCircle className="w-3.5 h-3.5 text-teal-500 flex-shrink-0"/>
+                              <p className="text-xs text-teal-700 font-medium">
+                                {d.status === 'refund_full' ? 'Rambursare integrală aprobată' : 'Rambursare parțială aprobată'}
+                              </p>
+                            </div>
+                          )}
+
+                          {d.status === 'forced_accepted' && (
+                            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-2">
+                              <CheckCircle className="w-3.5 h-3.5 text-gray-400 flex-shrink-0"/>
+                              <p className="text-xs text-gray-600">Plata a fost eliberată de admin</p>
+                            </div>
+                          )}
+
+                          {d.status === 'rework_marketplace' && (
+                            <div className="flex items-center gap-2 bg-sky-50 border border-sky-100 rounded-lg px-2.5 py-2">
+                              <Wrench className="w-3.5 h-3.5 text-sky-500 flex-shrink-0"/>
+                              <p className="text-xs text-sky-700 font-medium">Taskul a fost retrimis în marketplace</p>
+                            </div>
+                          )}
+
+                          {/* Admin decision (if any) */}
+                          {d.admin_decision && isResolved && (
+                            <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-2.5 py-1.5 line-clamp-2">
+                              Admin: <span className="text-gray-700">{d.admin_decision}</span>
+                            </p>
+                          )}
+
+                          <p className="text-[10px] text-gray-400">
+                            Deschis {new Date(d.created_at).toLocaleDateString('ro-RO', { day: '2-digit', month: 'long', year: 'numeric' })}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* ══════════════════════════════════════════════════════
             TAB: FAVORITES
@@ -1531,6 +1983,41 @@ export default function ClientDashboard() {
         )}
       </div>
 
+      {/* ══════ MINI-MODAL: Confirmare / Reprogramare Dată Relucrare ══════ */}
+      {reworkConfirmDispute && (() => {
+        const rd = reworkConfirmDispute
+        const fmtDeadline = (iso) => {
+          if (!iso) return '—'
+          const d = new Date(iso)
+          return d.toLocaleDateString('ro-RO', { weekday: 'long', day: '2-digit', month: 'long' })
+            + (d.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' }) !== '00:00'
+              ? ' la ' + d.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' })
+              : '')
+        }
+        return (
+          <ReworkConfirmModal
+            dispute={rd}
+            fmtDeadline={fmtDeadline}
+            availSlots={cdAvailSlots}
+            todayStr={CD_TODAY_STR}
+            onClose={() => setReworkConfirmDispute(null)}
+            onSuccess={async () => {
+              setReworkConfirmDispute(null)
+              // Reîncarcă disputele folosind currentUserId din state
+              const { data } = await supabase.from('task_disputes')
+                .select(`id, status, created_at, details, rework_deadline, client_rework_confirmed_at,
+                  handyman_response, handyman_response_at, admin_decision, timeline,
+                  task:task_id(id, title, status, final_price),
+                  handyman:handyman_id(first_name, last_name, avatar_url),
+                  rejection_reasons!reason_id(name)`)
+                .eq('client_id', currentUserId)
+                .order('created_at', { ascending: false })
+              setDisputes(data ?? [])
+            }}
+          />
+        )
+      })()}
+
       {/* Accept success modal */}
       {acceptedOffer && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
@@ -1583,32 +2070,42 @@ export default function ClientDashboard() {
 
 // ─── OFFER ROW ────────────────────────────────────────────────────────────────
 
-function OfferRow({ neg, originalPrice, loading, isUnseen, onAccept, onReject, onCounter }) {
-  const [showCounter,  setShowCounter]  = useState(false)
-  const [counterPrice, setCounterPrice] = useState('')
-  const [counterMsg,   setCounterMsg]   = useState('')
-  const [counterDate,  setCounterDate]  = useState(neg.available_date ?? '')
-  const [counterTime,  setCounterTime]  = useState(neg.available_time ?? '')
+function OfferRow({ neg, taskTitle, originalPrice, loading, isUnseen, onAccept, onReject, onCounter }) {
+  const [showCounter,    setShowCounter]    = useState(false)
+  const [showReschedule, setShowReschedule] = useState(false)
+  const [counterPrice,   setCounterPrice]   = useState('')
+  const [counterMsg,     setCounterMsg]     = useState('')
+  const safeDateInit = (d) => d && d >= CD_TODAY_STR ? d : ''
+  const safeTimeInit = (d, t) => safeDateInit(d) ? (t ?? '') : ''
+  const [counterDate,    setCounterDate]    = useState(safeDateInit(neg.available_date))
+  const [counterTime,    setCounterTime]    = useState(safeTimeInit(neg.available_date, neg.available_time))
+  const [reschedDate,    setReschedDate]    = useState(safeDateInit(neg.available_date))
+  const [reschedTime,    setReschedTime]    = useState(safeTimeInit(neg.available_date, neg.available_time))
+  const [reschedMsg,     setReschedMsg]     = useState('')
   const [handymanRounds, setHandymanRounds] = useState(0)
   const [clientRounds,   setClientRounds]   = useState(0)
+  const [allOffers,      setAllOffers]      = useState([])
 
-  const MAX_ROUNDS = 3
+  const MAX_ROUNDS = 5
 
-  // Load all offers for this task to count rounds
+  // Load all offers for this task to count rounds + diff detection
   useEffect(() => {
     supabase.from('task_offers')
-      .select('id, sent_by, status')
+      .select('id, sent_by, status, proposed_price, available_date, available_time')
       .eq('task_id', neg.task_id)
       .order('created_at', { ascending: true })
       .then(({ data }) => {
         const rows = data ?? []
+        setAllOffers(rows)
         setHandymanRounds(rows.filter(r => (r.sent_by ?? 'handyman') === 'handyman').length)
         setClientRounds(rows.filter(r => r.sent_by === 'client').length)
       })
   }, [neg.task_id, neg.id])
 
-  const canCounter     = neg.status !== 'negotiating' && clientRounds < MAX_ROUNDS
-  const roundsExhausted = clientRounds >= MAX_ROUNDS
+  const needsMyResponse  = neg.sent_by !== 'client'
+  const waitingForHandyman = neg.sent_by === 'client'
+  const canCounter       = needsMyResponse && clientRounds < MAX_ROUNDS
+  const roundsExhausted  = clientRounds >= MAX_ROUNDS
 
   const savings = originalPrice && neg.proposed_price
     ? Number(originalPrice) - Number(neg.proposed_price)
@@ -1625,168 +2122,427 @@ function OfferRow({ neg, originalPrice, loading, isUnseen, onAccept, onReject, o
         .replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
     : null
 
+  const prevClientOffer = needsMyResponse ? [...allOffers].reverse().find(r => r.sent_by === 'client') : null
+  const priceChanged = prevClientOffer && Number(neg.proposed_price) !== Number(prevClientOffer.proposed_price)
+  const dateChanged  = prevClientOffer && (neg.available_date !== prevClientOffer.available_date || neg.available_time !== prevClientOffer.available_time)
+
   return (
     <div className={`p-5 transition-colors ${isUnseen ? 'bg-orange-50/40' : ''}`}>
-      {/* Handyman info + price */}
-      <div className="flex items-start gap-3 mb-4">
+      <div className="flex items-start gap-4">
         {/* Avatar */}
-        <button onClick={() => handymanSlug && navigate(`/handymen/${handymanSlug}`)}
-          className="flex-shrink-0 w-12 h-12 rounded-full overflow-hidden border-2 border-blue-100 hover:border-blue-400 transition">
+        <button
+          onClick={() => handymanSlug && navigate(`/handymen/${handymanSlug}`)}
+          className="flex-shrink-0 w-12 h-12 rounded-full overflow-hidden hover:opacity-80 transition mt-0.5">
           {neg.handyman?.avatar_url
             ? <img src={neg.handyman.avatar_url} alt={handymanName} className="w-full h-full object-cover"/>
-            : <div className="w-full h-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold">{initials}</div>
-          }
+            : <div className="w-full h-full bg-blue-600 flex items-center justify-center text-white text-base font-bold">{initials}</div>}
         </button>
-
-        {/* Name + meta */}
+        {/* Info */}
         <div className="flex-1 min-w-0">
-          <button onClick={() => handymanSlug && navigate(`/handymen/${handymanSlug}`)}
-            className="text-base font-bold text-gray-900 hover:text-blue-600 transition text-left">
-            {handymanName}
-          </button>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-0.5">
-            {neg.handyman?.city && (
-              <span className="text-xs text-gray-400 flex items-center gap-1"><MapPin className="w-3 h-3"/>{neg.handyman.city}</span>
-            )}
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => handymanSlug && navigate(`/handymen/${handymanSlug}`)}
+              className="font-bold text-gray-900 text-base hover:text-blue-600 transition">{handymanName}</button>
+            {neg.handyman?.city && <span className="text-sm text-gray-400">· {neg.handyman.city}</span>}
             {neg.handyman?.average_rating > 0 && (
-              <span className="text-xs text-yellow-600 flex items-center gap-1 font-medium">★ {Number(neg.handyman.average_rating).toFixed(1)}</span>
+              <span className="text-sm text-yellow-600 font-medium">★ {Number(neg.handyman.average_rating).toFixed(1)}</span>
             )}
-            {neg.estimated_duration && (
-              <span className="text-xs text-gray-400 flex items-center gap-1"><Clock className="w-3 h-3"/>{neg.estimated_duration}</span>
-            )}
+            {needsMyResponse    && <span className="px-2.5 py-0.5 bg-blue-500 text-white text-xs font-bold rounded-full animate-pulse">Răspunde</span>}
+            {waitingForHandyman && <span className="px-2.5 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-full">Aștept meșter</span>}
           </div>
-        </div>
-
-        {/* Price + date */}
-        <div className="text-right flex-shrink-0">
-          <p className="text-2xl font-black text-blue-700">{fmtPrice(neg.proposed_price)}</p>
-          {savings > 0 && <p className="text-xs text-green-600 font-semibold">-{fmtPrice(savings)} față de buget</p>}
-          {savings < 0 && <p className="text-xs text-red-500 font-semibold">+{fmtPrice(Math.abs(savings))} peste buget</p>}
           {neg.available_date && (
-            <div className="flex items-center justify-end gap-1 mt-1.5 px-2 py-1 bg-blue-50 border border-blue-100 rounded-lg">
-              <Calendar className="w-3.5 h-3.5 text-blue-500 flex-shrink-0"/>
-              <span className="text-xs font-semibold text-blue-700 whitespace-nowrap">
-                {new Date(neg.available_date).toLocaleDateString('ro-RO',{weekday:'short', day:'2-digit', month:'short'})}
-                {neg.available_time ? ` · ${neg.available_time}` : ''}
-              </span>
-            </div>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {new Date(neg.available_date).toLocaleDateString('ro-RO', {weekday:'short',day:'numeric',month:'short',year:'numeric'})}
+              {neg.available_time && <span className="text-blue-600"> la {neg.available_time}</span>}
+            </p>
+          )}
+          {neg.message && <p className="text-sm text-gray-500 mt-1 italic">"{neg.message}"</p>}
+        </div>
+        {/* Price */}
+        <div className="flex-shrink-0 text-right">
+          <p className="text-2xl font-black text-blue-700">{fmtPrice(neg.proposed_price)}</p>
+          {savings !== null && savings > 0 && <p className="text-xs text-green-600 font-semibold">-{fmtPrice(savings)} față de buget</p>}
+          {savings !== null && savings < 0 && <p className="text-xs text-red-500 font-semibold">+{fmtPrice(Math.abs(savings))} peste buget</p>}
+        </div>
+      </div>
+
+      {/* Diff chips */}
+      {(priceChanged || dateChanged) && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {priceChanged && (
+            <span className="flex items-center gap-1 text-xs bg-blue-50 border border-blue-200 text-blue-700 rounded-lg px-2.5 py-1">
+              <DollarSign className="w-3 h-3 flex-shrink-0"/>
+              {fmtPrice(prevClientOffer.proposed_price)} → <strong>{fmtPrice(neg.proposed_price)}</strong>
+            </span>
+          )}
+          {dateChanged && (
+            <span className="flex items-center gap-1 text-xs bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-lg px-2.5 py-1">
+              <Calendar className="w-3 h-3 flex-shrink-0"/>
+              Dată nouă: <strong>{neg.available_date ? new Date(neg.available_date).toLocaleDateString('ro-RO',{day:'2-digit',month:'short'})+(neg.available_time ? ` · ${neg.available_time}` : '') : '—'}</strong>
+            </span>
           )}
         </div>
-      </div>
+      )}
 
-      {/* Round counter — symmetric with handyman view */}
-      <div className="flex items-center gap-3 mb-3 py-2 border-y border-gray-100">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-400 font-medium">Handyman:</span>
-          {[1,2,3].map(i => (
-            <span key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border
-              ${i <= handymanRounds ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-300 border-gray-200'}`}>
-              {i}
-            </span>
+      {/* Round counter */}
+      <div className="mt-3 flex items-center gap-3 text-xs text-gray-400">
+        <span>Handyman:</span>
+        <div className="flex gap-1">
+          {[1,2,3,4,5].map(i => (
+            <div key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold
+              ${i <= handymanRounds ? 'bg-purple-500 text-white' : 'bg-gray-100 text-gray-400'}`}>{i}</div>
           ))}
         </div>
-        <div className="w-px h-4 bg-gray-200" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-400 font-medium">Tu:</span>
-          {[1,2,3].map(i => (
-            <span key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border
-              ${i <= clientRounds ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-gray-300 border-gray-200'}`}>
-              {i}
-            </span>
+        <span>Tu:</span>
+        <div className="flex gap-1">
+          {[1,2,3,4,5].map(i => (
+            <div key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold
+              ${i <= clientRounds ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-400'}`}>{i}</div>
           ))}
         </div>
-        {roundsExhausted && (
-          <span className="text-xs text-red-500 font-medium ml-1">· Limita ta atinsă</span>
-        )}
+        {roundsExhausted && <span className="text-red-500 font-medium ml-1">Limită atinsă</span>}
       </div>
 
-      {/* Message */}
-      {neg.message && (
-        <div className="bg-gray-50 rounded-xl p-3 mb-3 text-sm text-gray-600 italic">
-          "{neg.message}"
+      {/* Actions */}
+      {needsMyResponse && !showCounter && !showReschedule && (
+        <div className="mt-4 space-y-2">
+          <div className="flex gap-2">
+            <button onClick={onAccept} disabled={loading}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 disabled:opacity-50 transition">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin"/> : <CheckCircle className="w-4 h-4"/>}
+              Acceptă
+            </button>
+            {canCounter && (
+              <button onClick={() => { setShowReschedule(true); setShowCounter(false) }}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-yellow-500 text-white rounded-xl text-sm font-bold hover:bg-yellow-600 transition">
+                <Calendar className="w-4 h-4"/> Schimbă data
+              </button>
+            )}
+            {canCounter && (
+              <button onClick={() => { setShowCounter(true); setShowReschedule(false) }}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition">
+                <DollarSign className="w-4 h-4"/> Negociază
+              </button>
+            )}
+            <button onClick={onReject} disabled={loading}
+              className="px-4 py-2.5 border border-gray-200 text-gray-400 rounded-xl text-sm hover:bg-gray-50 hover:text-red-500 transition disabled:opacity-50">
+              <XCircle className="w-4 h-4"/>
+            </button>
+          </div>
+          {!canCounter && <p className="text-xs text-center text-gray-400">Runde epuizate — poți accepta sau refuza.</p>}
         </div>
       )}
 
-      {/* Waiting status */}
-      {neg.status === 'negotiating' && (
-        <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 mb-3 flex items-center gap-2">
-          <Loader2 className="w-3.5 h-3.5 text-orange-500 animate-spin flex-shrink-0"/>
-          <div>
-            <p className="text-xs font-bold text-orange-600">Ai trimis o contra-ofertă</p>
-            <p className="text-xs text-orange-500">Aștepți răspunsul handymanului...</p>
+      {/* Waiting — only show decline button */}
+      {waitingForHandyman && !showCounter && !showReschedule && (
+        <div className="mt-4">
+          <button onClick={onReject} disabled={loading}
+            className="px-4 py-2.5 border border-gray-200 text-gray-400 rounded-xl text-sm hover:bg-gray-50 hover:text-red-500 transition disabled:opacity-50">
+            <XCircle className="w-4 h-4"/>
+          </button>
+        </div>
+      )}
+
+      {/* Negociază prețul form */}
+      {showCounter && (
+        <div className="mt-4 pt-4 border-t border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50 -mx-5 -mb-5 px-5 pb-5 space-y-3">
+          <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">
+            Negociază prețul (Runda {clientRounds + 1}/{MAX_ROUNDS})
+          </p>
+          <input type="number" value={counterPrice} onChange={e => setCounterPrice(e.target.value)}
+            placeholder="Prețul tău (RON) *"
+            className="w-full px-3 py-2 border border-blue-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+          <input type="date" value={counterDate} min={CD_TODAY_STR}
+            onChange={e => { const d = e.target.value; setCounterDate(d); if (d === CD_TODAY_STR && counterTime && cdToMins(counterTime) <= (new Date().getHours()*60+new Date().getMinutes())) setCounterTime('') }}
+            className="w-full px-3 py-2 border border-blue-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+          {counterDate && (
+            <div>
+              <p className="text-xs text-blue-600 mb-1.5">Ora <span className="text-blue-400">(opțional)</span></p>
+              {cdAvailSlots(counterDate).length === 0
+                ? <p className="text-xs text-orange-600 italic">Nu mai sunt ore disponibile azi.</p>
+                : <div className="grid grid-cols-5 gap-1.5">
+                    {cdAvailSlots(counterDate).map(t => (
+                      <button key={t} type="button" onClick={() => setCounterTime(t === counterTime ? '' : t)}
+                        className={`py-2 rounded-xl text-xs font-semibold border transition-all
+                          ${counterTime === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border-blue-200 text-gray-700 hover:border-blue-400'}`}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>}
+            </div>
+          )}
+          <input type="text" placeholder="Mesaj opțional..." value={counterMsg} onChange={e => setCounterMsg(e.target.value)}
+            className="w-full px-3 py-2 border border-blue-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+          <div className="flex gap-2">
+            <button onClick={() => { setShowCounter(false); setCounterMsg('') }}
+              className="flex-1 py-2 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-white transition font-medium">
+              Anulează
+            </button>
+            <button onClick={() => { onCounter(counterPrice, counterMsg, counterDate, counterTime); setShowCounter(false); setCounterPrice(''); setCounterMsg('') }}
+              disabled={!counterPrice || loading}
+              className="flex-[2] flex items-center justify-center gap-1.5 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:opacity-50 transition">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin"/> : 'Trimite oferta'}
+            </button>
           </div>
         </div>
       )}
+
+      {/* Schimbă data form */}
+      {showReschedule && (
+        <div className="mt-4 pt-4 border-t border-yellow-100 bg-gradient-to-br from-yellow-50 to-amber-50 -mx-5 -mb-5 px-5 pb-5 space-y-3">
+          <p className="text-xs font-bold text-yellow-700 uppercase tracking-wide">
+            Schimbă data (Runda {clientRounds + 1}/{MAX_ROUNDS})
+          </p>
+          <p className="text-xs text-yellow-600">Prețul rămâne <strong>{fmtPrice(neg.proposed_price)}</strong></p>
+          <input type="date" value={reschedDate} min={CD_TODAY_STR}
+            onChange={e => { const d = e.target.value; setReschedDate(d); if (d === CD_TODAY_STR && reschedTime && cdToMins(reschedTime) <= (new Date().getHours()*60+new Date().getMinutes())) setReschedTime('') }}
+            className="w-full px-3 py-2 border border-yellow-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-yellow-400"/>
+          {reschedDate && (
+            <div>
+              <p className="text-xs text-yellow-600 mb-1.5">Ora <span className="text-yellow-400">(opțional)</span></p>
+              {cdAvailSlots(reschedDate).length === 0
+                ? <p className="text-xs text-orange-600 italic">Nu mai sunt ore disponibile azi.</p>
+                : <div className="grid grid-cols-5 gap-1.5">
+                    {cdAvailSlots(reschedDate).map(t => (
+                      <button key={t} type="button" onClick={() => setReschedTime(t === reschedTime ? '' : t)}
+                        className={`py-2 rounded-xl text-xs font-semibold border transition-all
+                          ${reschedTime === t ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white border-yellow-300 text-gray-700 hover:border-yellow-400'}`}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>}
+            </div>
+          )}
+          <input type="text" placeholder="Mesaj opțional..." value={reschedMsg} onChange={e => setReschedMsg(e.target.value)}
+            className="w-full px-3 py-2 border border-yellow-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-yellow-400"/>
+          <div className="flex gap-2">
+            <button onClick={() => { setShowReschedule(false); setReschedMsg('') }}
+              className="flex-1 py-2 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-white transition font-medium">
+              Anulează
+            </button>
+            <button onClick={() => { onCounter(neg.proposed_price, reschedMsg, reschedDate, reschedTime); setShowReschedule(false); setReschedMsg('') }}
+              disabled={!reschedDate || loading}
+              className="flex-[2] flex items-center justify-center gap-1.5 py-2 bg-yellow-500 text-white rounded-xl text-sm font-bold hover:bg-yellow-600 disabled:opacity-50 transition">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin"/> : 'Trimite schimbarea'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── CLIENT REWORK PROPOSAL CARD ──────────────────────────────────────────────
+
+const MAX_REWORK_ROUNDS = 4
+const CD_RWP_SLOTS = TIME_SLOTS
+
+function ClientReworkProposalCard({ proposal, onRefresh }) {
+  const [responding,  setResponding]  = useState(false)
+  const [showCounter, setShowCounter] = useState(false)
+  const [cDate,       setCDate]       = useState('')
+  const [cTime,       setCTime]       = useState('')
+  const [cNote,       setCNote]       = useState('')
+
+  const nowMins   = new Date().getHours()*60+new Date().getMinutes()
+  const slots     = cDate === CD_TODAY_STR
+    ? CD_RWP_SLOTS.filter(t => cdToMins(t) > nowMins)
+    : CD_RWP_SLOTS
+
+  const h         = proposal.handyman
+  const handyName = h ? `${h.first_name ?? ''} ${h.last_name ?? ''}`.trim() || 'Meșter' : 'Meșter'
+  const task      = proposal.task
+
+  const isPending       = proposal.status === 'pending'
+  const isAccepted      = proposal.status === 'accepted'
+  const isDeclined      = proposal.status === 'declined'
+  const needsMyResponse = isPending && proposal.proposed_by === 'handyman'
+  const waitingForHandy = isPending && proposal.proposed_by === 'client'
+  const canCounter      = needsMyResponse && proposal.round_count < MAX_REWORK_ROUNDS
+
+  const respond = async (action) => {
+    setResponding(true)
+    const { data, error } = await supabase.rpc('respond_rework_proposal', {
+      p_proposal_id: proposal.id,
+      p_action:      action,
+      p_date:        action === 'counter' ? cDate  : null,
+      p_time:        action === 'counter' ? (cTime || null) : null,
+      p_note:        action === 'counter' ? (cNote || null) : null,
+    })
+    setResponding(false)
+    if (error || data?.success === false) {
+      alert(data?.error || error?.message || 'Eroare la răspuns.')
+      return
+    }
+    setShowCounter(false)
+    onRefresh()
+  }
+
+  return (
+    <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-shadow hover:shadow-md
+      ${isDeclined ? 'opacity-70 border-gray-100' : needsMyResponse ? 'border-orange-200' : 'border-gray-100'}`}>
+      <div className="p-5">
+        <div className="flex items-start gap-4">
+          {/* Avatar */}
+          <div className="flex-shrink-0 w-12 h-12 rounded-full overflow-hidden mt-0.5">
+            {h?.avatar_url
+              ? <img src={h.avatar_url} className="w-full h-full object-cover"/>
+              : <div className="w-full h-full bg-orange-500 flex items-center justify-center text-white text-base font-bold">{handyName[0]}</div>}
+          </div>
+          {/* Info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-bold text-gray-900 text-base">{handyName}</p>
+              {h?.city && <span className="text-sm text-gray-400">· {h.city}</span>}
+              {needsMyResponse && <span className="px-2.5 py-0.5 bg-orange-500 text-white text-xs font-bold rounded-full animate-pulse">Răspunde</span>}
+              {waitingForHandy && <span className="px-2.5 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-full">Aștept meșter</span>}
+              {isAccepted && <span className="px-2.5 py-0.5 bg-green-100 text-green-700 text-xs font-bold rounded-full">Confirmată ✓</span>}
+              {isDeclined && <span className="px-2.5 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full">Refuzată</span>}
+            </div>
+            <p className="text-sm text-gray-500 mt-0.5">{task?.title ?? 'Relucrare'}</p>
+            {(proposal.proposed_by === 'handyman' ? proposal.handyman_note : proposal.client_note) && (
+              <p className="text-sm text-gray-500 mt-1 italic">
+                "{proposal.proposed_by === 'handyman' ? proposal.handyman_note : proposal.client_note}"
+              </p>
+            )}
+          </div>
+          {/* Date */}
+          <div className="flex-shrink-0 text-right">
+            <p className="text-2xl font-black text-orange-600">
+              {proposal.proposed_date
+                ? new Date(proposal.proposed_date).toLocaleDateString('ro-RO', {day:'2-digit',month:'short'})
+                : '—'}
+            </p>
+            {proposal.proposed_time && <p className="text-sm text-gray-500">la {proposal.proposed_time}</p>}
+            {proposal.proposed_date && (
+              <p className="text-xs text-gray-400">
+                {new Date(proposal.proposed_date).toLocaleDateString('ro-RO', {year:'numeric'})}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Round counter */}
+        <div className="mt-3 flex items-center gap-3 text-xs text-gray-400">
+          <span>Runda {proposal.round_count}/{MAX_REWORK_ROUNDS}</span>
+          <div className="flex gap-1">
+            {[1,2,3,4].map(i => (
+              <div key={i} className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold
+                ${i <= proposal.round_count ? 'bg-orange-400 text-white' : 'bg-gray-100 text-gray-400'}`}>{i}</div>
+            ))}
+          </div>
+        </div>
+
+        {/* Timeline history */}
+        {proposal.timeline?.length > 1 && (
+          <div className="mt-3 space-y-1.5 border-t border-gray-50 pt-3">
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Istoric</p>
+            {proposal.timeline.map((entry, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs text-gray-500">
+                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0
+                  ${entry.action === 'accept' ? 'bg-green-400' : entry.action === 'decline' ? 'bg-red-400' : 'bg-orange-400'}`} />
+                <span className={entry.by === 'client' ? 'text-blue-600 font-medium' : 'text-purple-600 font-medium'}>
+                  {entry.by === 'client' ? 'Tu' : handyName.split(' ')[0]}:
+                </span>
+                <span>
+                  {entry.action === 'accept' ? 'Acceptat' :
+                   entry.action === 'decline' ? 'Refuzat' :
+                   (entry.date ? new Date(entry.date).toLocaleDateString('ro-RO', { day: 'numeric', month: 'short' }) + (entry.time ? ` la ${entry.time}` : '') : '—')}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Actions */}
+        {needsMyResponse && !showCounter && (
+          <div className="mt-4 space-y-2">
+            <div className="flex gap-2">
+              <button onClick={() => respond('accept')} disabled={responding}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 disabled:opacity-50 transition">
+                {responding ? <Loader2 className="w-4 h-4 animate-spin"/> : <CheckCircle className="w-4 h-4"/>}
+                Acceptă
+              </button>
+              {canCounter && (
+                <button onClick={() => setShowCounter(true)}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-orange-500 text-white rounded-xl text-sm font-bold hover:bg-orange-600 transition">
+                  <CalendarClock className="w-4 h-4"/> Altă dată
+                </button>
+              )}
+              <button onClick={() => respond('decline')} disabled={responding}
+                className="px-4 py-2.5 border border-gray-200 text-gray-400 rounded-xl text-sm hover:bg-gray-50 hover:text-red-500 transition disabled:opacity-50">
+                <XCircle className="w-4 h-4"/>
+              </button>
+            </div>
+            {!canCounter && isPending && (
+              <p className="text-xs text-center text-gray-400">Runde epuizate — poți accepta sau refuza.</p>
+            )}
+          </div>
+        )}
+
+        {/* Accepted state */}
+        {isAccepted && (
+          <div className="mt-4 pt-4 border-t border-green-100 flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0"/>
+            <div>
+              <p className="text-sm font-bold text-green-800">Dată confirmată</p>
+              <p className="text-xs text-green-600">
+                {new Date(proposal.proposed_date).toLocaleDateString('ro-RO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                {proposal.proposed_time && ` la ${proposal.proposed_time}`}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Counter form */}
       {showCounter && (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-3 space-y-2">
-          <p className="text-xs font-bold text-gray-600">
-            Contra-ofertă ({MAX_ROUNDS - clientRounds} {MAX_ROUNDS - clientRounds === 1 ? 'rundă rămasă' : 'runde rămase'})
+        <div className="border-t border-orange-100 bg-gradient-to-br from-orange-50 to-amber-50 px-5 py-4 space-y-3">
+          <p className="text-xs font-bold text-orange-700 uppercase tracking-wide">
+            Propune altă dată (Runda {proposal.round_count + 1}/{MAX_REWORK_ROUNDS})
           </p>
-          <input type="number" value={counterPrice} onChange={e => setCounterPrice(e.target.value)}
-            placeholder="Prețul tău (RON)"
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="text-[10px] text-gray-400 font-medium mb-0.5 block">Data propusă</label>
-              <input type="date" value={counterDate} onChange={e => setCounterDate(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+          <input
+            type="date" min={CD_TODAY_STR}
+            value={cDate}
+            onChange={e => { setCDate(e.target.value); setCTime('') }}
+            className="w-full px-3 py-2 border border-orange-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-400"
+          />
+          {cDate && (
+            <div>
+              <p className="text-xs text-orange-600 mb-1.5">Ora <span className="text-orange-400">(opțional)</span></p>
+              {slots.length === 0
+                ? <p className="text-xs text-orange-600 italic">Nu mai sunt ore disponibile azi.</p>
+                : (
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {slots.map(t => (
+                      <button key={t} type="button"
+                        onClick={() => setCTime(prev => prev === t ? '' : t)}
+                        className={`py-2 rounded-xl text-xs font-semibold border transition-all
+                          ${cTime === t ? 'bg-orange-500 text-white border-orange-500' : 'bg-white border-orange-200 text-gray-700 hover:border-orange-400'}`}
+                      >{t}</button>
+                    ))}
+                  </div>
+                )}
             </div>
-            <div className="flex-1">
-              <label className="text-[10px] text-gray-400 font-medium mb-0.5 block">Ora</label>
-              <select value={counterTime} onChange={e => setCounterTime(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">Selectează</option>
-                {['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00','18:00'].map(h => (
-                  <option key={h} value={h}>{h}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <textarea value={counterMsg} onChange={e => setCounterMsg(e.target.value)} rows={2}
-            placeholder="Mesaj opțional..."
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+          )}
+          <input type="text" placeholder="Notă opțională..." value={cNote}
+            onChange={e => setCNote(e.target.value)}
+            className="w-full px-3 py-2 border border-orange-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-400"
+          />
           <div className="flex gap-2">
-            <button onClick={() => setShowCounter(false)}
-              className="flex-1 py-2 border border-gray-200 rounded-lg text-xs font-medium text-gray-500 hover:bg-gray-100 transition">
+            <button onClick={() => { setShowCounter(false); setCDate(''); setCTime(''); setCNote('') }}
+              className="flex-1 py-2 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-white transition font-medium">
               Anulează
             </button>
-            <button onClick={() => {
-                onCounter(counterPrice, counterMsg, counterDate, counterTime)
-                setShowCounter(false); setCounterPrice(''); setCounterMsg('')
-              }}
-              disabled={!counterPrice || loading}
-              className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition disabled:opacity-50">
-              Trimite
+            <button onClick={() => respond('counter')} disabled={!cDate || responding}
+              className="flex-[2] flex items-center justify-center gap-1.5 py-2 bg-orange-500 text-white rounded-xl text-sm font-bold hover:bg-orange-600 disabled:opacity-50 transition">
+              {responding
+                ? <Loader2 className="w-4 h-4 animate-spin"/>
+                : <><Send className="w-3.5 h-3.5"/> Trimite contra-propunerea</>}
             </button>
           </div>
         </div>
       )}
-
-      {/* Actions */}
-      <div className="flex gap-2">
-        <button onClick={onAccept} disabled={loading}
-          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-green-600 text-white rounded-xl text-xs font-bold hover:bg-green-700 transition disabled:opacity-60">
-          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <CheckCircle className="w-3.5 h-3.5"/>}
-          Acceptă {fmtPrice(neg.proposed_price)}
-        </button>
-        {canCounter && !showCounter && (
-          <button onClick={() => setShowCounter(true)}
-            className="px-4 py-2.5 border border-blue-200 text-blue-600 rounded-xl text-xs font-bold hover:bg-blue-50 transition">
-            Negociază
-          </button>
-        )}
-        {roundsExhausted && !showCounter && (
-          <div className="px-3 py-2.5 bg-gray-100 text-gray-400 rounded-xl text-xs flex items-center">
-            Limită atinsă
-          </div>
-        )}
-        <button onClick={onReject} disabled={loading}
-          className="px-3 py-2.5 border border-red-200 text-red-400 rounded-xl text-xs hover:bg-red-50 hover:text-red-600 transition disabled:opacity-60">
-          <XCircle className="w-3.5 h-3.5"/>
-        </button>
-      </div>
     </div>
   )
 }

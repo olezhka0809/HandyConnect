@@ -945,7 +945,7 @@ export default function ClientProfile() {
                                 <span className={`ml-1 px-1.5 py-0.5 rounded text-xs font-medium
                                 ${task.urgency === 'emergency' ? 'bg-red-100 text-red-600' : 'bg-yellow-100 text-yellow-600'}
                                 `}>
-                                {task.urgency === 'emergency' ? 'Urgență' : 'Urgent'}
+                                {task.urgency === 'emergency' ? 'Urgență critică' : 'Urgență medie'}
                                 </span>
                             )}
                             </div>
