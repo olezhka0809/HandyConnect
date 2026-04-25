@@ -10,7 +10,19 @@ import {
 } from 'lucide-react'
 
 const ROMANIAN_WORDS = ['ALBASTRU','RAPID','CERUL','VERDE','STEJAR','MUNTE','FULGER','ROATA','FLUTURE','CASA','DRUM','PIATRA']
-const TIME_SLOTS = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00']
+const TIME_SLOTS = [
+  '07:00','07:30','08:00','08:30','09:00','09:30',
+  '10:00','10:30','11:00','11:30','12:00','12:30',
+  '13:00','13:30','14:00','14:30','15:00','15:30',
+  '16:00','16:30','17:00','17:30','18:00','18:30','19:00',
+]
+const JRM_TODAY = new Date().toISOString().split('T')[0]
+const jrmToMins = t => { const [h, m] = t.split(':'); return parseInt(h) * 60 + parseInt(m) }
+const jrmAvail  = (date) => {
+  if (date !== JRM_TODAY) return TIME_SLOTS
+  const nowMins = new Date().getHours() * 60 + new Date().getMinutes()
+  return TIME_SLOTS.filter(t => jrmToMins(t) > nowMins)
+}
 const CONFIRM_WORD = 'ACCEPT'
 const DURATION_OPTIONS = ['30 minute', '1 oră', '1-2 ore', '2-3 ore', '3-4 ore', '4-6 ore', '6-8 ore', '1 zi', 'Peste 1 zi']
 
@@ -43,7 +55,7 @@ function ProgressDots({mode}){
   return(<div className="flex items-center justify-center gap-6 mb-2">{steps.map((step,i)=><div key={step.id} className="flex flex-col items-center gap-1"><div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${i<activeIdx?'bg-green-500 text-white':''} ${i===activeIdx?'bg-blue-600 text-white ring-4 ring-blue-100':''} ${i>activeIdx?'bg-gray-100 text-gray-400':''}`}>{i<activeIdx?<CheckCircle className="w-4 h-4"/>:i+1}</div><span className={`text-[10px] font-medium ${i===activeIdx?'text-blue-600':'text-gray-400'}`}>{step.label}</span></div>)}</div>)
 }
 
-export default function JobRequestModal({job,initialMode='details',userId,onClose,onUpdate}){
+export default function JobRequestModal({job,initialMode='details',userId,handymanName,onClose,onUpdate}){
   const navigate=useNavigate()
   const [mode,setMode]=useState('details')
   const [client,setClient]=useState(null)
@@ -96,12 +108,15 @@ export default function JobRequestModal({job,initialMode='details',userId,onClos
       if(job._type==='booking'){await supabase.from('bookings').update({status:'accepted',scheduled_date:scheduleDate||undefined,scheduled_time:scheduleTime||undefined,updated_at:new Date().toISOString()}).eq('id',job._id)}
       else{await supabase.from('tasks').update({status:'assigned',handyman_id:userId,scheduled_date:scheduleDate||undefined,scheduled_time:scheduleTime||undefined,approximate_duration:estimatedDuration||null,updated_at:new Date().toISOString()}).eq('id',job._id)}
       if(job.clientId){
+        const hmName = handymanName || 'un meșter'
         await supabase.from('notifications').insert({
           user_id:job.clientId,
-          type:'task_accepted',
-          title:job._type==='booking'?'Rezervare acceptată!':'Task acceptat!',
-          body:`„${job.title}" a fost acceptat. Verifică detaliile în dashboard.`,
-          data:{job_id:job._id,job_type:job._type,redirect:'/dashboard'},
+          type: job._type==='booking' ? 'booking_confirmed' : 'task_allocated',
+          title: job._type==='booking' ? 'Rezervare acceptată!' : 'Task alocat meșterului',
+          body: job._type==='booking'
+            ? `Rezervarea „${job.title}" a fost acceptată de ${hmName}.`
+            : `Taskul „${job.title}" a fost alocat lui ${hmName}.`,
+          data:{job_id:job._id,job_type:job._type,redirect:'/dashboard?tab=tasks'},
         })
 
         // Creare conversație automată dacă nu există deja
@@ -218,10 +233,10 @@ export default function JobRequestModal({job,initialMode='details',userId,onClos
       if(job.clientId){
         await supabase.from('notifications').insert({
           user_id:job.clientId,
-          type:'new_offer',
+          type:'reschedule_request',
           title:'Cerere de reprogramare',
           body:`Meșteșugarul propune reprogramarea „${job.title}" pe ${reschedDate} la ${reschedTime}.`,
-          data:{job_id:job._id,job_type:job._type,redirect:'/dashboard'},
+          data:{job_id:job._id,job_type:job._type,redirect:'/dashboard?tab=reschedule'},
         })
       }
       setMode('reschedule_done')
@@ -235,26 +250,60 @@ export default function JobRequestModal({job,initialMode='details',userId,onClos
   const handleCompleteJob=async()=>{
     if(compPhotos.length===0){setError('Trebuie să adaugi cel puțin o poză.');return}
     setSaving(true);setError(null);setUploadProgress(true)
+    const isReworkCompletion = job._type === 'task' && job.isRework
+    // For rework tasks, link completion to the original task so the client modal can find it
+    const completionJobId = isReworkCompletion ? (job._raw?.task_id ?? job._id) : job._id
     try{
       const uploadedUrls=[]
       for(const{file}of compPhotos){const ext=file.name.split('.').pop();const path=`${userId}/${job._id}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;const{error:upErr}=await supabase.storage.from('completion-photos').upload(path,file,{contentType:file.type});if(upErr)throw upErr;const{data:urlData}=supabase.storage.from('completion-photos').getPublicUrl(path);uploadedUrls.push(urlData.publicUrl)}
-      await supabase.from('job_completions').insert({job_id:job._id,job_type:job._type,handyman_id:userId,completion_photos:uploadedUrls,completion_description:compDesc||null,...(job._type==='booking'?{booking_id:job._id}:{task_id:job._id})})
+      await supabase.from('job_completions').insert({job_id:completionJobId,job_type:job._type,handyman_id:userId,completion_photos:uploadedUrls,completion_description:compDesc||null,...(job._type==='booking'?{booking_id:job._id}:{task_id:job._id})})
       const table=job._type==='booking'?'bookings':'tasks'
-      await supabase.from(table).update({status:'completed',completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',job._id)
+      const completedStatus = isReworkCompletion ? 'rework_completed' : 'completed'
+      await supabase.from(table).update({status:completedStatus,completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',job._id)
+      if (isReworkCompletion) {
+        // Update the dispute so the client sees the rework_completed approval section
+        await supabase.from('task_disputes')
+          .update({ status: 'rework_completed', updated_at: new Date().toISOString() })
+          .eq('task_id', completionJobId)
+          .in('status', ['rework_accepted', 'rework_scheduled', 'rework_in_progress'])
+      }
       if(job.clientId){
         await supabase.from('notifications').insert({
           user_id: job.clientId,
           type: 'service_completed',
-          title: 'Serviciu finalizat',
-          body: `„${job.title}" a fost marcat ca finalizat. Lasă o recenzie pentru meșteșugar!`,
+          title: isReworkCompletion ? 'Relucrare finalizată' : 'Serviciu finalizat',
+          body: isReworkCompletion
+            ? `„${job.title}" — relucrarea a fost finalizată. Confirmă sau deschide o dispută.`
+            : `„${job.title}" a fost marcat ca finalizat. Lasă o recenzie pentru meșteșugar!`,
           data: {
             job_id: job._id,
             job_type: job._type,
-            redirect: job._type === 'booking'
+            is_rework: isReworkCompletion,
+            redirect: isReworkCompletion
+              ? '/dashboard?tab=tasks&filter=rework'
+              : job._type === 'booking'
               ? '/dashboard?tab=bookings&bookingFilter=completed'
               : '/dashboard?tab=tasks&filter=completed',
           },
         })
+      }
+      // Notify admins when a rework is completed (so they can monitor client approval)
+      if (isReworkCompletion) {
+        try {
+          const { data: roleRow } = await supabase.from('roles').select('id').eq('name','admin').single()
+          if (roleRow?.id) {
+            const { data: admins } = await supabase.from('user_roles').select('user_id').eq('role_id', roleRow.id)
+            for (const { user_id } of (admins ?? [])) {
+              await supabase.from('notifications').insert({
+                user_id,
+                type:  'rework_scheduled',
+                title: 'Relucrare finalizată — așteptare aprobare client',
+                body:  `„${job.title}" — relucrarea a fost marcată finalizată. Clientul urmează să confirme.`,
+                data:  { job_id: job._id, redirect: '/admin/dashboard?tab=disputes' },
+              })
+            }
+          }
+        } catch(e) { console.warn('[JobRequest] admin notify error:', e?.message) }
       }
       // Închide conversația pentru bookings (la tasks o închide clientul la aprobare)
       if(job._type==='booking'){
@@ -359,13 +408,20 @@ export default function JobRequestModal({job,initialMode='details',userId,onClos
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold text-gray-600 mb-1.5">Data</label>
-                    <input type="date" value={scheduleDate} onChange={e=>setScheduleDate(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
+                    <input type="date" value={scheduleDate}
+                      onChange={e => {
+                        const d = e.target.value
+                        setScheduleDate(d)
+                        if (d === JRM_TODAY && scheduleTime && jrmToMins(scheduleTime) <= new Date().getHours() * 60 + new Date().getMinutes()) setScheduleTime('')
+                      }}
+                      min={new Date().toISOString().split('T')[0]}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-600 mb-1.5">Ora</label>
                     <select value={scheduleTime} onChange={e=>setScheduleTime(e.target.value)} className="w-full px-3 py-2.5 border border-gray-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
                       <option value="">Selectează</option>
-                      {TIME_SLOTS.map(t=><option key={t} value={t}>{t}</option>)}
+                      {jrmAvail(scheduleDate).map(t=><option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
                 </div>
@@ -420,11 +476,18 @@ export default function JobRequestModal({job,initialMode='details',userId,onClos
               <div className="bg-gray-50 rounded-xl p-3 text-sm"><p className="text-xs text-gray-400 mb-1">Data curentă:</p><p className="font-semibold text-gray-700">{job.date}</p></div>
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2"><Calendar className="w-4 h-4 inline mr-1 text-gray-400"/>Noua Dată *</label>
-                <input type="date" value={reschedDate} onChange={e=>setReschedDate(e.target.value)} min={new Date(Date.now()+86400000).toISOString().split('T')[0]} className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
+                <input type="date" value={reschedDate}
+                  onChange={e => {
+                    const d = e.target.value
+                    setReschedDate(d)
+                    if (d === JRM_TODAY && reschedTime && jrmToMins(reschedTime) <= new Date().getHours() * 60 + new Date().getMinutes()) setReschedTime('')
+                  }}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
               </div>
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2"><Clock className="w-4 h-4 inline mr-1 text-gray-400"/>Noua Oră *</label>
-                <div className="grid grid-cols-4 gap-2">{TIME_SLOTS.map(t=><button key={t} onClick={()=>setReschedTime(t)} className={`py-2.5 rounded-xl text-sm font-medium border transition-all ${reschedTime===t?'bg-blue-600 text-white border-blue-600':'border-gray-200 text-gray-600 hover:border-blue-400'}`}>{t}</button>)}</div>
+                <div className="grid grid-cols-4 gap-2">{jrmAvail(reschedDate).map(t=><button key={t} onClick={()=>setReschedTime(t)} className={`py-2.5 rounded-xl text-sm font-medium border transition-all ${reschedTime===t?'bg-blue-600 text-white border-blue-600':'border-gray-200 text-gray-600 hover:border-blue-400'}`}>{t}</button>)}</div>
               </div>
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2">Mesaj <span className="font-normal text-gray-400">(opțional)</span></label>

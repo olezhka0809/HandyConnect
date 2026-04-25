@@ -3,7 +3,8 @@ import { supabase } from '../../supabase'
 import {
   X, Star, CheckCircle, Clock, Camera, FileText,
   Banknote, ChevronLeft, ChevronRight, Loader2,
-  Briefcase, Tag, AlertCircle, ThumbsUp, ThumbsDown
+  Briefcase, Tag, AlertCircle, ThumbsUp, ThumbsDown,
+  User
 } from 'lucide-react'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -83,17 +84,9 @@ export default function CompletedJobModal({ job, onClose }) {
   const [loading,    setLoading]    = useState(true)
 
   useEffect(() => {
-    supabase
-      .from('job_completions')
-      .select('*')
-      .eq('job_id', job._id)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => {
-        setCompletion(data ?? null)
-        setLoading(false)
-      })
+    supabase.from('job_completions').select('*')
+      .eq('job_id', job._id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => { setCompletion(data ?? null); setLoading(false) })
   }, [job._id])
 
   const TypeIcon = job._type === 'task' ? Briefcase : Tag
@@ -119,8 +112,8 @@ export default function CompletedJobModal({ job, onClose }) {
                   <TypeIcon className="w-3 h-3" />
                   {job._type === 'task' ? 'Task' : 'Rezervare'}
                 </span>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700 border border-green-200">
-                  <CheckCircle className="w-3 h-3" /> Finalizat
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${job.isRework ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-green-100 text-green-700 border-green-200'}`}>
+                  <CheckCircle className="w-3 h-3" /> {job.isRework ? 'Relucrare finalizată' : 'Finalizat'}
                 </span>
               </div>
               <h2 className="text-base font-bold text-gray-800 leading-snug">{job.title}</h2>
