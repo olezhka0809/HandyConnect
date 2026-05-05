@@ -117,11 +117,15 @@ function DayRow({ day, slots, onToggle, onSlotChange, onAddSlot, onRemoveSlot })
       {/* Day header */}
       <div
         className={`flex items-center gap-3 px-4 py-3 cursor-pointer select-none transition
-          ${isActive ? 'bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'}`}
+          ${isActive ? 'bg-blue-50 hover:bg-blue-100' : 'bg-gray-50 hover:bg-blue-50'}`}
+        onClick={() => {
+          if (!isActive) onToggle(day.key)
+          else setExpanded(e => !e)
+        }}
       >
         {/* Toggle active/inactive */}
         <button
-          onClick={() => onToggle(day.key)}
+          onClick={(e) => { e.stopPropagation(); onToggle(day.key) }}
           className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition
             ${isActive ? 'bg-blue-600 border-blue-600' : 'border-gray-300 hover:border-blue-400'}`}
         >
@@ -132,7 +136,7 @@ function DayRow({ day, slots, onToggle, onSlotChange, onAddSlot, onRemoveSlot })
           )}
         </button>
 
-        <span className={`font-semibold text-sm flex-1 ${isActive ? 'text-blue-700' : 'text-gray-400'}`}>
+        <span className={`font-semibold text-sm flex-1 ${isActive ? 'text-blue-700' : 'text-gray-500'}`}>
           {day.label}
         </span>
 
@@ -142,12 +146,12 @@ function DayRow({ day, slots, onToggle, onSlotChange, onAddSlot, onRemoveSlot })
           </span>
         )}
         {!isActive && (
-          <span className="text-xs text-gray-400 mr-2">Liber</span>
+          <span className="text-xs text-gray-400 mr-2 group-hover:text-blue-400">Liber · <span className="text-blue-400">apasă pentru a activa</span></span>
         )}
 
         {isActive && (
           <button
-            onClick={() => setExpanded(e => !e)}
+            onClick={(e) => { e.stopPropagation(); setExpanded(e2 => !e2) }}
             className="text-gray-400 hover:text-gray-600 transition"
           >
             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
