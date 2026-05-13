@@ -6,8 +6,10 @@ import CityAutocomplete from '../components/CityAutocomplete'
 import {
   ChevronLeft, ChevronRight, Camera, CheckCircle, X, DollarSign,
   Clock, MapPin, AlertTriangle, Zap, Phone, Mail,
-  Tag, Image, Info, Users, Heart, Search, Star
+  Tag, Image, Info, Users, Heart, Search, Star, Sparkles, Loader2
 } from 'lucide-react'
+
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 import TaskPhoto from '../components/TaskPhoto'
 
 
@@ -30,6 +32,13 @@ export default function PostTask() {
   const [favorites, setFavorites] = useState([])
   const [searchResults, setSearchResults] = useState([])
   const [handymanSearch, setHandymanSearch] = useState('')
+  const [aiLoading,      setAiLoading]      = useState(false)
+  const [aiError,        setAiError]        = useState(null)
+  const [aiDone,         setAiDone]         = useState(false)
+  const [aiAlsoDetected, setAiAlsoDetected] = useState([])
+  const [budgetAiLoading, setBudgetAiLoading] = useState(false)
+  const [budgetAiResult, setBudgetAiResult] = useState(null)
+  const [budgetAiError, setBudgetAiError] = useState(null)
 
   const [form, setForm] = useState({
     category: '',
@@ -135,6 +144,64 @@ export default function PostTask() {
   const removePhoto = (index) => {
     setPhotoPreviews(prev => prev.filter((_, i) => i !== index))
     setForm(prev => ({ ...prev, photos: prev.photos.filter((_, i) => i !== index) }))
+    setAiDone(false)
+  }
+
+  const URGENCY_MAP = { low: 'normal', normal: 'urgent', high: 'emergency' }
+
+  const estimateBudgetWithAI = async () => {
+    if (!form.title || !form.description) return
+    setBudgetAiLoading(true)
+    setBudgetAiResult(null)
+    setBudgetAiError(null)
+    try {
+      const res  = await fetch(`${API_URL}/api/ai/estimate-budget`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: form.title, description: form.description, category: form.category }),
+      })
+      const json = await res.json()
+      if (!json.ok) throw new Error(json.error || 'Eroare AI')
+      setBudgetAiResult(json.data)
+    } catch (e) {
+      setBudgetAiError(e.message || 'Estimarea a eșuat. Încearcă din nou.')
+    } finally {
+      setBudgetAiLoading(false)
+    }
+  }
+
+  const analyzeWithAI = async () => {
+    if (form.photos.length === 0) return
+    setAiLoading(true)
+    setAiError(null)
+    setAiDone(false)
+    try {
+      const fd = new FormData()
+      form.photos.forEach(f => fd.append('photos', f))
+      fd.append('categories', JSON.stringify(dbCategories.map(c => ({ name: c.name }))))
+
+      const res  = await fetch(`${API_URL}/api/ai/analyze-task`, { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!json.ok) throw new Error(json.error || 'Eroare AI')
+
+      const { title, description, category, urgency, keywords, also_detected } = json.data
+      setForm(prev => ({
+        ...prev,
+        title:       title       || prev.title,
+        description: description || prev.description,
+        category:    dbCategories.find(c => c.name === category)?.name || prev.category,
+        urgency:     URGENCY_MAP[urgency] || prev.urgency,
+        keywords:    Array.isArray(keywords)
+          ? [...new Set([...prev.keywords, ...keywords])].slice(0, 10)
+          : prev.keywords,
+      }))
+      setAiAlsoDetected(Array.isArray(also_detected) ? also_detected.filter(Boolean) : [])
+      setAiDone(true)
+    } catch (e) {
+      setAiError(e.message || 'Analiza AI a eșuat. Încearcă din nou.')
+    } finally {
+      setAiLoading(false)
+    }
   }
 
   const handleSubmit = async () => {
@@ -437,6 +504,73 @@ const toggleHandyman = (id) => {
                     </label>
                   )}
                 </div>
+
+                {/* Buton AI — apare doar dacă există poze */}
+                {photoPreviews.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    <button
+                      onClick={analyzeWithAI}
+                      disabled={aiLoading}
+                      className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl font-semibold text-sm transition-all
+                        bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700
+                        disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+                    >
+                      {aiLoading
+                        ? <><Loader2 className="w-4 h-4 animate-spin"/> Analizez imaginile…</>
+                        : <><Sparkles className="w-4 h-4"/> Analizează cu AI — completează formularul automat</>
+                      }
+                    </button>
+
+                    {aiDone && (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-xl text-xs text-green-700 font-medium">
+                          <CheckCircle className="w-4 h-4 flex-shrink-0"/>
+                          Formularul a fost completat automat. Verifică și ajustează dacă e necesar.
+                        </div>
+
+                        {aiAlsoDetected.length > 0 && (
+                          <div className="px-3 py-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
+                            <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
+                              <AlertTriangle className="w-3.5 h-3.5"/>
+                              AI-ul a mai detectat în imagine:
+                            </p>
+                            <div className="flex flex-col gap-1.5">
+                              {aiAlsoDetected.map((problem, i) => (
+                                <div key={i} className="flex items-start justify-between gap-2 bg-white rounded-lg px-3 py-2 border border-amber-100">
+                                  <span className="text-xs text-amber-900 flex-1">{problem}</span>
+                                  <button
+                                    onClick={() => {
+                                      setForm(prev => ({
+                                        ...prev,
+                                        description: prev.description
+                                          ? `${prev.description}\n\nProblemă adițională observată: ${problem}`
+                                          : `Problemă adițională observată: ${problem}`
+                                      }))
+                                      setAiAlsoDetected(prev => prev.filter((_, j) => j !== i))
+                                    }}
+                                    className="text-xs font-semibold text-amber-700 hover:text-amber-900 whitespace-nowrap border border-amber-200 rounded-md px-2 py-0.5 hover:bg-amber-100 transition"
+                                  >
+                                    + Adaugă
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                            <p className="text-[10px] text-amber-600 italic">
+                              Poți adăuga aceste observații la descriere sau le poți ignora.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {aiError && (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                        <AlertTriangle className="w-4 h-4 flex-shrink-0"/>
+                        {aiError}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -491,6 +625,73 @@ const toggleHandyman = (id) => {
                   />
                   <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-gray-400 font-medium">RON</span>
                 </div>
+
+                {/* Buton estimare AI */}
+                {form.title && form.description && (
+                  <div className="mt-3 space-y-3">
+                    <button
+                      onClick={estimateBudgetWithAI}
+                      disabled={budgetAiLoading}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-sm font-semibold transition-all
+                        border-2 border-purple-200 text-purple-700 bg-purple-50 hover:bg-purple-100
+                        disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {budgetAiLoading
+                        ? <><Loader2 className="w-4 h-4 animate-spin"/> Calculez prețul…</>
+                        : <><Sparkles className="w-4 h-4"/> Estimează bugetul cu AI</>
+                      }
+                    </button>
+
+                    {budgetAiResult && (
+                      <div className="p-4 bg-gradient-to-br from-purple-50 to-blue-50 border border-purple-200 rounded-xl space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-purple-700 uppercase tracking-wide">Estimare AI</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                            budgetAiResult.confidence === 'high'   ? 'bg-green-100 text-green-700' :
+                            budgetAiResult.confidence === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>
+                            {budgetAiResult.confidence === 'high' ? 'Precizie ridicată' :
+                             budgetAiResult.confidence === 'medium' ? 'Precizie medie' : 'Estimare generală'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="bg-white rounded-lg p-2 border border-purple-100">
+                            <p className="text-xs text-gray-400">Minim</p>
+                            <p className="font-bold text-gray-800">{budgetAiResult.min_budget} RON</p>
+                          </div>
+                          <div className="bg-purple-600 rounded-lg p-2 text-white">
+                            <p className="text-xs opacity-80">Recomandat</p>
+                            <p className="font-bold">{budgetAiResult.recommended} RON</p>
+                          </div>
+                          <div className="bg-white rounded-lg p-2 border border-purple-100">
+                            <p className="text-xs text-gray-400">Maxim</p>
+                            <p className="font-bold text-gray-800">{budgetAiResult.max_budget} RON</p>
+                          </div>
+                        </div>
+
+                        {budgetAiResult.reasoning && (
+                          <p className="text-xs text-gray-600 leading-relaxed">{budgetAiResult.reasoning}</p>
+                        )}
+
+                        <button
+                          onClick={() => update('budget', budgetAiResult.recommended)}
+                          className="w-full py-2 text-xs font-semibold text-purple-700 bg-white border border-purple-200 rounded-lg hover:bg-purple-50 transition"
+                        >
+                          Aplică valoarea recomandată ({budgetAiResult.recommended} RON)
+                        </button>
+                      </div>
+                    )}
+
+                    {budgetAiError && (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                        <AlertTriangle className="w-4 h-4 flex-shrink-0"/>
+                        {budgetAiError}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Address */}
