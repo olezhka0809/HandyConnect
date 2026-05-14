@@ -45,6 +45,7 @@ export default function HandymanProfile() {
 
   // data
   const [handyman,       setHandyman]       = useState(null)
+  const [handySchedule,  setHandySchedule]  = useState(null)
   const [profile,        setProfile]        = useState(null)
   const [services,       setServices]       = useState([])
   const [reviews,        setReviews]        = useState([])
@@ -88,6 +89,14 @@ export default function HandymanProfile() {
 
       if (!hp) { setNotFound(true); setLoading(false); return }
       setHandyman(hp)
+
+      // 2b. schedule
+      const { data: sched } = await supabase
+        .from('handyman_schedule')
+        .select('schedule,travel_buffer_min')
+        .eq('handyman_id', matched.id)
+        .maybeSingle()
+      setHandySchedule(sched)
 
       // 3. services
       const { data: svcs } = await supabase
@@ -223,7 +232,9 @@ export default function HandymanProfile() {
   const ratingAvg = handyman?.rating_avg ?? (reviews.length ? reviews.reduce((a,b)=>a+b.rating,0)/reviews.length : 0)
   const availDays = handyman?.available_days ?? []
 
-  const DAYS_LABEL = { luni:'Luni', marti:'Marți', miercuri:'Miercuri', joi:'Joi', vineri:'Vineri', sambata:'Sâmbătă', duminica:'Duminică' }
+  const DAYS_LABEL  = { luni:'Luni', marti:'Marți', miercuri:'Miercuri', joi:'Joi', vineri:'Vineri', sambata:'Sâmbătă', duminica:'Duminică' }
+  const DAY_KEY_MAP = { luni:'mon', marti:'tue', miercuri:'wed', joi:'thu', vineri:'fri', sambata:'sat', duminica:'sun' }
+  const DAYS_RO     = ['luni','marti','miercuri','joi','vineri','sambata','duminica']
 
   const vLevel    = handyman?.verification_level ?? 0
   const trustBadge = getTrustBadge(handyman?.trust_score ?? 0)
@@ -538,22 +549,37 @@ export default function HandymanProfile() {
                 {/* DISPONIBILITATE */}
                 {activeTab==='disponibilitate'&&(
                   <div>
-                    <p className="text-sm font-bold text-gray-700 mb-3">Zile de lucru</p>
+                    <p className="text-sm font-bold text-gray-700 mb-3">Program de lucru</p>
                     <div className="space-y-2">
-                      {Object.entries(DAYS_LABEL).map(([key, label])=>{
-                        const act = availDays.includes(key)
+                      {DAYS_RO.map(day=>{
+                        const schedKey = DAY_KEY_MAP[day]
+                        const slots = handySchedule?.schedule?.[schedKey] ?? []
+                        const act = handySchedule ? slots.length > 0 : availDays.includes(day)
                         return (
-                          <div key={key} className={`flex items-center justify-between px-4 py-2.5 rounded-xl ${act?'bg-blue-50 border border-blue-100':'bg-gray-50 border border-gray-100'}`}>
-                            <span className={`text-sm font-medium ${act?'text-blue-700':'text-gray-400'}`}>{label}</span>
+                          <div key={day} className={`flex items-center justify-between px-4 py-2.5 rounded-xl ${act?'bg-blue-50 border border-blue-100':'bg-gray-50 border border-gray-100'}`}>
+                            <span className={`text-sm font-medium ${act?'text-blue-700':'text-gray-400'}`}>{DAYS_LABEL[day]}</span>
                             {act
-                              ? <span className="text-xs text-blue-600 font-semibold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5"/>Disponibil</span>
+                              ? <span className="text-xs text-blue-600 font-semibold flex items-center gap-1">
+                                  <CheckCircle className="w-3.5 h-3.5"/>
+                                  {slots.length > 0
+                                    ? slots.map(s=>`${s.from} – ${s.to}`).join(', ')
+                                    : 'Disponibil'
+                                  }
+                                </span>
                               : <span className="text-xs text-gray-400">Indisponibil</span>
                             }
                           </div>
                         )
                       })}
                     </div>
-                    {availDays.length===0&&<p className="text-sm text-gray-400 italic text-center py-6">Program nespecificat de handyman</p>}
+                    {!handySchedule && availDays.length===0 && (
+                      <p className="text-sm text-gray-400 italic text-center py-6">Program nespecificat de handyman</p>
+                    )}
+                    {handySchedule?.travel_buffer_min && (
+                      <p className="text-xs text-gray-400 mt-3 text-center">
+                        Buffer deplasare între joburi: {handySchedule.travel_buffer_min} min
+                      </p>
+                    )}
                   </div>
                 )}
 
