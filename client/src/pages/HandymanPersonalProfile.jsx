@@ -12,8 +12,11 @@ import {
   Mail, Phone, Lock, AlertTriangle, Clock, Upload, FileText,
   Info, Download, Briefcase, TrendingUp, Wallet, ArrowDownRight,
   Search, ShieldCheck, Fingerprint, FileCheck, BadgeCheck,
-  Image, Video, Building2, ChevronDown, ChevronUp, Eye, Send, Car
+  Image, Video, Building2, ChevronDown, ChevronUp, Eye, Send, Car,
+  Sparkles, Loader2
 } from 'lucide-react'
+
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 // ─── Configurații constante ────────────────────────────────────────────────────
 
@@ -173,6 +176,11 @@ export default function HandymanPersonalProfile() {
   const [isSuspended, setIsSuspended] = useState(false)
   const [suspensionReason, setSuspensionReason] = useState(null)
   const [activeVerifTab, setActiveVerifTab] = useState('identity')
+  const [bioAiLoading,   setBioAiLoading]   = useState(false)
+  const [bioAiError,     setBioAiError]     = useState(null)
+  const [showBioAiModal, setShowBioAiModal] = useState(false)
+  const [bioAiExtra,     setBioAiExtra]     = useState('')
+  const [bioAiTone,      setBioAiTone]      = useState('profesional')
   const [identityDoc1, setIdentityDoc1] = useState(null)
   const [identityDoc1Preview, setIdentityDoc1Preview] = useState(null)
   const [identityDoc2, setIdentityDoc2] = useState(null)
@@ -603,6 +611,33 @@ export default function HandymanPersonalProfile() {
     return rank(a.id) - rank(b.id)
   })
 
+  const generateBioWithAI = async () => {
+    setBioAiLoading(true)
+    setBioAiError(null)
+    try {
+      const res  = await fetch(`${API_URL}/api/ai/generate-bio`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          specialties:      handymanProfile?.specialties ?? [],
+          experience_years: editForm.experience_years ?? handymanProfile?.experience_years,
+          certifications:   handymanProfile?.certifications ?? null,
+          extra:            bioAiExtra || null,
+          tone:             bioAiTone,
+        }),
+      })
+      const json = await res.json()
+      if (!json.ok) throw new Error(json.error || 'Eroare AI')
+      setEditForm(p => ({ ...p, bio: json.data.bio }))
+      setShowBioAiModal(false)
+      setBioAiExtra('')
+    } catch (e) {
+      setBioAiError(e.message || 'Generarea a eșuat. Încearcă din nou.')
+    } finally {
+      setBioAiLoading(false)
+    }
+  }
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
       <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -739,8 +774,23 @@ export default function HandymanPersonalProfile() {
                     <div className="flex items-center gap-2"><Mail className="w-4 h-4 text-gray-400" /><p className="text-gray-800">{profile?.email}</p><span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium">Verificat</span></div></div>
                   <div><label className="block text-sm font-medium text-gray-500 mb-1">Telefon</label>
                     {editing ? <input type="tel" value={editForm.phone||''} onChange={e=>setEditForm(p=>({...p,phone:e.target.value}))} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" /> : <div className="flex items-center gap-2"><Phone className="w-4 h-4 text-gray-400" /><p className="text-gray-800">{profile?.phone||'Necompletat'}</p></div>}</div>
-                  <div><label className="block text-sm font-medium text-gray-500 mb-1">Bio / Descriere</label>
-                    {editing ? <textarea value={editForm.bio||''} onChange={e=>setEditForm(p=>({...p,bio:e.target.value}))} rows={3} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" /> : <p className="text-gray-800">{handymanProfile?.bio||'Nedefinit'}</p>}</div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-sm font-medium text-gray-500">Bio / Descriere</label>
+                      {editing && (
+                        <button
+                          onClick={() => setShowBioAiModal(true)}
+                          className="flex items-center gap-1 text-xs font-semibold text-purple-600 hover:text-purple-800 transition"
+                        >
+                          <Sparkles className="w-3.5 h-3.5"/> Generează cu AI
+                        </button>
+                      )}
+                    </div>
+                    {editing
+                      ? <textarea value={editForm.bio||''} onChange={e=>setEditForm(p=>({...p,bio:e.target.value}))} rows={3} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                      : <p className="text-gray-800">{handymanProfile?.bio||'Nedefinit'}</p>
+                    }
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div><label className="block text-sm font-medium text-gray-500 mb-1">Ani experiență</label>
                       {editing ? <input type="number" value={editForm.experience_years||''} onChange={e=>setEditForm(p=>({...p,experience_years:parseInt(e.target.value)||0}))} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" /> : <p className="text-gray-800">{handymanProfile?.experience_years||0} ani</p>}</div>
@@ -1626,6 +1676,56 @@ export default function HandymanPersonalProfile() {
             <p className="text-sm mb-1"><strong>{handymanProfile?.primary_city||'Nedefinit'}</strong> → <strong>{zoneForm.city}, {zoneForm.county}</strong></p>
             <p className="text-xs text-gray-400 mb-6">Rază: {zoneForm.radius} km principală, {zoneForm.extended} km extinsă</p>
             <div className="flex gap-3"><button onClick={()=>setShowConfirmZone(false)} className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600 hover:bg-gray-50">Anulează</button><button onClick={handleConfirmZoneChange} className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700">Da, schimbă</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL AI BIO ── */}
+      {showBioAiModal && (
+        <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center px-4" onClick={() => setShowBioAiModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-purple-600"/>
+                <h3 className="text-base font-bold text-gray-800">Generează bio cu AI</h3>
+              </div>
+              <button onClick={() => setShowBioAiModal(false)} className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-400"/>
+              </button>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Ton preferat</label>
+              <div className="flex gap-2">
+                {['profesional','prietenos','direct'].map(t => (
+                  <button key={t} onClick={() => setBioAiTone(t)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition capitalize ${
+                      bioAiTone === t ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-600 hover:border-purple-300'
+                    }`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Ce vrei să evidențiezi? (opțional)</label>
+              <textarea value={bioAiExtra} onChange={e => setBioAiExtra(e.target.value)} rows={3}
+                placeholder="Ex: lucrez rapid, prețuri corecte, disponibil weekenduri..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"/>
+            </div>
+            {bioAiError && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0"/>{bioAiError}
+              </div>
+            )}
+            <button onClick={generateBioWithAI} disabled={bioAiLoading}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm
+                bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700
+                disabled:opacity-60 disabled:cursor-not-allowed transition">
+              {bioAiLoading
+                ? <><Loader2 className="w-4 h-4 animate-spin"/> Generez bio…</>
+                : <><Sparkles className="w-4 h-4"/> Generează</>
+              }
+            </button>
           </div>
         </div>
       )}
