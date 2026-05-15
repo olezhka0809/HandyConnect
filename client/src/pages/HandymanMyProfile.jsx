@@ -5,11 +5,14 @@ import {
   Edit3, Save, X, Star, MapPin, CheckCircle, Shield,
   Award, Briefcase, Camera, Plus, Loader2,
   ToggleLeft, ToggleRight, MessageSquare, Wrench, XCircle,
-  Zap, RotateCcw, Globe, ChevronDown, ChevronUp, Clock
+  Zap, RotateCcw, Globe, ChevronDown, ChevronUp, Clock, Sparkles
 } from 'lucide-react'
+
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 const DAYS_RO    = ['luni','marti','miercuri','joi','vineri','sambata','duminica']
 const DAYS_LABEL = { luni:'Luni', marti:'Marți', miercuri:'Miercuri', joi:'Joi', vineri:'Vineri', sambata:'Sâmbătă', duminica:'Duminică' }
+const DAY_KEY_MAP = { luni:'mon', marti:'tue', miercuri:'wed', joi:'thu', vineri:'fri', sambata:'sat', duminica:'sun' }
 const RADIUS_OPT = ['5','10','15','25','50','100']
 
 function initials(f,l) { return `${f?.[0]??''}${l?.[0]??''}`.toUpperCase() }
@@ -92,6 +95,12 @@ export default function HandymanMyProfile() {
   const [userId,          setUserId]           = useState(null)
   const [uploadingAvatar, setUploadingAvatar]  = useState(false)
   const [uploadingCover,  setUploadingCover]   = useState(false)
+  const [handySchedule,   setHandySchedule]    = useState(null)
+  const [bioAiLoading,    setBioAiLoading]     = useState(false)
+  const [bioAiError,      setBioAiError]       = useState(null)
+  const [showBioAiModal,  setShowBioAiModal]   = useState(false)
+  const [bioAiExtra,      setBioAiExtra]       = useState('')
+  const [bioAiTone,       setBioAiTone]        = useState('profesional')
   const avatarRef = useRef()
   const coverRef  = useRef()
 
@@ -110,7 +119,7 @@ export default function HandymanMyProfile() {
       if (!user) return
       setUserId(user.id)
 
-      const [{ data:prof }, { data:uInfo }, { data:svcs }] = await Promise.all([
+      const [{ data:prof }, { data:uInfo }, { data:svcs }, { data:sched }] = await Promise.all([
         supabase.from('handyman_profiles').select('*').eq('user_id', user.id).maybeSingle(),
         supabase.from('profiles').select('first_name,last_name,avatar_url,phone,email').eq('id', user.id).maybeSingle(),
         supabase.from('handyman_services')
@@ -118,6 +127,7 @@ export default function HandymanMyProfile() {
           .eq('handyman_id', user.id)
           .eq('is_available', true)
           .order('created_at',{ ascending:false }),
+        supabase.from('handyman_schedule').select('schedule,travel_buffer_min').eq('handyman_id', user.id).maybeSingle(),
       ])
 
       const { data:bIds } = await supabase.from('bookings').select('id').eq('handyman_id', user.id)
@@ -130,7 +140,7 @@ export default function HandymanMyProfile() {
         revs = data ?? []
       }
 
-      setProfile(prof); setUserInfo(uInfo); setServices(svcs??[]); setReviews(revs)
+      setProfile(prof); setUserInfo(uInfo); setServices(svcs??[]); setReviews(revs); setHandySchedule(sched)
       if (prof) setForm({
         bio:              prof.bio ?? '',
         experience_years: prof.experience_years ?? '',
@@ -251,6 +261,33 @@ export default function HandymanMyProfile() {
     { id:'disponibilitate', label:'Disponibilitate' },
     { id:'despre',          label:'Despre' },
   ]
+
+  const generateBioWithAI = async () => {
+    setBioAiLoading(true)
+    setBioAiError(null)
+    try {
+      const res  = await fetch(`${API_URL}/api/ai/generate-bio`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          specialties:      profile?.specialties ?? [],
+          experience_years: form.experience_years || profile?.experience_years,
+          certifications:   form.certifications   || profile?.certifications,
+          extra:            bioAiExtra || null,
+          tone:             bioAiTone,
+        }),
+      })
+      const json = await res.json()
+      if (!json.ok) throw new Error(json.error || 'Eroare AI')
+      setForm(p => ({ ...p, bio: json.data.bio }))
+      setShowBioAiModal(false)
+      setBioAiExtra('')
+    } catch (e) {
+      setBioAiError(e.message || 'Generarea a eșuat.')
+    } finally {
+      setBioAiLoading(false)
+    }
+  }
 
   if (loading) return (
     <div className="min-h-screen bg-gray-50">
@@ -469,11 +506,23 @@ export default function HandymanMyProfile() {
               </div>
               {editMode ? (
                 <div className="space-y-4">
-                  <textarea value={form.bio} onChange={e=>setForm(p=>({...p,bio:e.target.value}))} rows={5}
-                    placeholder="Descrie-te: experiența ta, ce tipuri de lucrări faci, cum lucrezi cu clienții…"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"/>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs font-bold text-gray-600">Descriere bio</label>
+                      <button
+                        onClick={() => setShowBioAiModal(true)}
+                        className="flex items-center gap-1 text-xs font-semibold text-purple-600 hover:text-purple-800 transition"
+                      >
+                        <Sparkles className="w-3.5 h-3.5"/> Generează cu AI
+                      </button>
+                    </div>
+                    <textarea value={form.bio} onChange={e=>setForm(p=>({...p,bio:e.target.value}))} rows={5}
+                      placeholder="Descrie-te: experiența ta, ce tipuri de lucrări faci, cum lucrezi cu clienții…"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"/>
+                  </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-600 mb-2">Certificări / Licențe</label>
+
                     <textarea value={form.certifications} onChange={e=>setForm(p=>({...p,certifications:e.target.value}))} rows={2}
                       placeholder="Ex: Electrician autorizat ANRE, Instalator autorizat…"
                       className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"/>
@@ -605,41 +654,46 @@ export default function HandymanMyProfile() {
                 {/* DISPONIBILITATE */}
                 {activeTab==='disponibilitate'&&(
                   <div>
-                    {editMode ? (
-                      <div>
-                        <p className="text-sm font-bold text-gray-700 mb-3">Zilele în care lucrezi</p>
-                        <div className="grid grid-cols-4 gap-2">
-                          {DAYS_RO.map(day=>{
-                            const active=form.available_days.includes(day)
-                            return (
-                              <button key={day}
-                                onClick={()=>setForm(p=>({...p,available_days:active?p.available_days.filter(d=>d!==day):[...p.available_days,day]}))}
-                                className={`py-2.5 rounded-xl text-xs font-semibold border transition ${active?'bg-blue-600 text-white border-blue-600':'bg-white text-gray-500 border-gray-200 hover:border-blue-300'}`}>
-                                {DAYS_LABEL[day]}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    ) : (
-                      <div>
-                        <p className="text-sm font-bold text-gray-700 mb-3">Program de lucru</p>
-                        <div className="space-y-2">
-                          {DAYS_RO.map(day=>{
-                            const act=availDays.includes(day)
-                            return (
-                              <div key={day} className={`flex items-center justify-between px-4 py-2.5 rounded-xl ${act?'bg-blue-50 border border-blue-100':'bg-gray-50 border border-gray-100'}`}>
-                                <span className={`text-sm font-medium ${act?'text-blue-700':'text-gray-400'}`}>{DAYS_LABEL[day]}</span>
-                                {act
-                                  ? <span className="text-xs text-blue-600 font-semibold flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5"/>Disponibil</span>
-                                  : <span className="text-xs text-gray-400">Indisponibil</span>
-                                }
-                              </div>
-                            )
-                          })}
-                        </div>
-                        {availDays.length===0&&<p className="text-sm text-gray-400 italic text-center py-4">Editează profilul pentru a seta disponibilitatea.</p>}
-                      </div>
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm font-bold text-gray-700">Program de lucru</p>
+                      <a
+                        href="/handyman/personal-profile"
+                        className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800 transition"
+                      >
+                        <Edit3 className="w-3 h-3"/> Editează programul
+                      </a>
+                    </div>
+                    <div className="space-y-2">
+                      {DAYS_RO.map(day=>{
+                        const schedKey = DAY_KEY_MAP[day]
+                        const slots = handySchedule?.schedule?.[schedKey] ?? []
+                        const act = handySchedule ? slots.length > 0 : availDays.includes(day)
+                        return (
+                          <div key={day} className={`flex items-center justify-between px-4 py-2.5 rounded-xl ${act?'bg-blue-50 border border-blue-100':'bg-gray-50 border border-gray-100'}`}>
+                            <span className={`text-sm font-medium ${act?'text-blue-700':'text-gray-400'}`}>{DAYS_LABEL[day]}</span>
+                            {act
+                              ? <span className="text-xs text-blue-600 font-semibold flex items-center gap-1">
+                                  <CheckCircle className="w-3.5 h-3.5"/>
+                                  {slots.length > 0
+                                    ? slots.map(s=>`${s.from} – ${s.to}`).join(', ')
+                                    : 'Disponibil'
+                                  }
+                                </span>
+                              : <span className="text-xs text-gray-400">Indisponibil</span>
+                            }
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {!handySchedule && availDays.length===0 && (
+                      <p className="text-sm text-gray-400 italic text-center py-4">
+                        Programul nu e setat. Apasă „Editează programul" pentru a-l configura.
+                      </p>
+                    )}
+                    {handySchedule?.travel_buffer_min && (
+                      <p className="text-xs text-gray-400 mt-3 text-center">
+                        Buffer deplasare: {handySchedule.travel_buffer_min} min între joburi
+                      </p>
                     )}
                   </div>
                 )}
@@ -685,6 +739,60 @@ export default function HandymanMyProfile() {
 
         </div>
       </div>
+
+      {/* ── MODAL AI BIO ── */}
+      {showBioAiModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4" onClick={() => setShowBioAiModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-purple-600"/>
+                <h3 className="text-base font-bold text-gray-800">Generează bio cu AI</h3>
+              </div>
+              <button onClick={() => setShowBioAiModal(false)} className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-400"/>
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Ton preferat</label>
+              <div className="flex gap-2">
+                {['profesional','prietenos','direct'].map(t => (
+                  <button key={t} onClick={() => setBioAiTone(t)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition capitalize ${
+                      bioAiTone === t ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-600 hover:border-purple-300'
+                    }`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Ce vrei să evidențiezi? (opțional)</label>
+              <textarea value={bioAiExtra} onChange={e => setBioAiExtra(e.target.value)} rows={3}
+                placeholder="Ex: lucrez rapid, prețuri corecte, disponibil weekenduri..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"/>
+            </div>
+
+            {bioAiError && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                <XCircle className="w-4 h-4 flex-shrink-0"/>{bioAiError}
+              </div>
+            )}
+
+            <button onClick={generateBioWithAI} disabled={bioAiLoading}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm
+                bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700
+                disabled:opacity-60 disabled:cursor-not-allowed transition">
+              {bioAiLoading
+                ? <><Loader2 className="w-4 h-4 animate-spin"/> Generez bio…</>
+                : <><Sparkles className="w-4 h-4"/> Generează</>
+              }
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
