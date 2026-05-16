@@ -10,6 +10,8 @@ import {
   MoreHorizontal, Droplets, Plug, Zap, ImagePlus, Upload
 } from 'lucide-react'
 
+const API_URL = import.meta.env.VITE_API_URL ?? ''
+
 // ─── category icon map ────────────────────────────────────────────────────────
 const ICON_MAP = {
   bolt: Plug,
@@ -159,6 +161,8 @@ export default function HandymanServiceModal({ serviceId, onClose, onUpdated }) 
   const [deleting,   setDeleting]   = useState(false)
   const [toggling,   setToggling]   = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [descAiLoading,  setDescAiLoading]  = useState(false)
+  const [descAiError,    setDescAiError]    = useState(null)
 
   // ── load ───────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -353,6 +357,33 @@ export default function HandymanServiceModal({ serviceId, onClose, onUpdated }) 
       const path = new URL(url).pathname.split('/service-photos/')[1]
       if (path) await supabase.storage.from('service-photos').remove([path])
     } catch (_) {}
+  }
+
+  const generateDescriptionWithAI = async () => {
+    if (!editForm.title) return
+    setDescAiLoading(true)
+    setDescAiError(null)
+    try {
+      const categoryName = categories.find(c => c.id === editForm.category_id)?.name ?? ''
+      const res  = await fetch(`${API_URL}/api/ai/generate-service-description`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title:              editForm.title,
+          category:           categoryName,
+          base_price:         editForm.base_price,
+          price_per_hour:     editForm.price_per_hour,
+          estimated_duration: editForm.estimated_duration,
+        }),
+      })
+      const json = await res.json()
+      if (!json.ok) throw new Error(json.error || 'Eroare AI')
+      setEditForm(p => ({ ...p, description: json.data.description }))
+    } catch (e) {
+      setDescAiError(e.message || 'Generarea a eșuat.')
+    } finally {
+      setDescAiLoading(false)
+    }
   }
 
   // ── render ───────────────────────────────────────────────────────────────────
@@ -665,11 +696,27 @@ export default function HandymanServiceModal({ serviceId, onClose, onUpdated }) 
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1.5">Descriere</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-sm font-bold text-gray-700">Descriere</label>
+                  {editForm.title && (
+                    <button onClick={generateDescriptionWithAI} disabled={descAiLoading}
+                      className="flex items-center gap-1 text-xs font-semibold text-purple-600 hover:text-purple-800 transition disabled:opacity-50">
+                      {descAiLoading
+                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin"/> Generez…</>
+                        : <><Sparkles className="w-3.5 h-3.5"/> Completează cu AI</>
+                      }
+                    </button>
+                  )}
+                </div>
                 <textarea value={editForm.description}
                   onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
                   rows={3} placeholder="Descrie serviciul oferit..."
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm" />
+                {descAiError && (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3"/>{descAiError}
+                  </p>
+                )}
               </div>
 
               <div>
