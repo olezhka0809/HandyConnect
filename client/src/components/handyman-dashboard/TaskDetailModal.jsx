@@ -7,8 +7,10 @@ import {
   Droplets, Square, Wrench, Paintbrush, Hammer,
   Sparkles, Flower2, Sofa, CircuitBoard, Lightbulb,
   Building2, MoreHorizontal, ChevronLeft, ChevronRight,
-  CheckCircle, Plug, Layers, Wind, CalendarClock
+  CheckCircle, Plug, Layers, Wind, CalendarClock, Plus, Trash2
 } from 'lucide-react'
+
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 // ─── category icon map (matches your DB icon column) ──────────────────────────
 // Valorile din coloana `icon` din tabela categories
@@ -175,6 +177,10 @@ export default function TaskDetailModal({ taskId, userId, onClose, onNegotiate, 
   const [rescheduleMsg,   setRescheduleMsg]   = useState('')
   const [scheduling,      setScheduling]      = useState(false)
   const [scheduleSuccess, setScheduleSuccess] = useState(false)
+  const [activeTab,       setActiveTab]       = useState('detalii')
+  const [checklist,       setChecklist]       = useState(null)
+  const [checklistLoading,setChecklistLoading]= useState(false)
+  const [checklistError,  setChecklistError]  = useState(null)
 
   useEffect(() => {
     if (!taskId) {
@@ -219,6 +225,12 @@ export default function TaskDetailModal({ taskId, userId, onClose, onNegotiate, 
     load()
     return () => { cancelled = true }
   }, [taskId])
+
+  useEffect(() => {
+    if (activeTab === 'lista-ai' && task?.id && userId && !checklist) {
+      loadChecklist(task.id)
+    }
+  }, [activeTab, task?.id])
 
   const handleReschedule = async () => {
     if (!rescheduleDate || !rescheduleTime || !task || !userId) return
@@ -274,6 +286,71 @@ export default function TaskDetailModal({ taskId, userId, onClose, onNegotiate, 
 
   const clientLocation = [client?.city, client?.county].filter(Boolean).join(', ') || null
 
+  // ── checklist AI ──────────────────────────────────────────────────────────
+  const loadChecklist = async (taskId) => {
+    const { data } = await supabase
+      .from('task_ai_checklists')
+      .select('*')
+      .eq('task_id', taskId)
+      .eq('handyman_id', userId)
+      .maybeSingle()
+    if (data) setChecklist(data)
+  }
+
+  const generateChecklist = async () => {
+    if (!task) return
+    setChecklistLoading(true)
+    setChecklistError(null)
+    try {
+      const res  = await fetch(`${API_URL}/api/ai/generate-checklist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title:       task.title,
+          description: task.description,
+          category:    task.categories?.name ?? '',
+        }),
+      })
+      const json = await res.json()
+      if (!json.ok) throw new Error(json.error || 'Eroare AI')
+
+      const newChecklist = {
+        task_id:         task.id,
+        handyman_id:     userId,
+        estimated_hours: json.data.estimated_hours,
+        tools:           json.data.tools    ?? [],
+        materials:       json.data.materials ?? [],
+        safety_notes:    json.data.safety_notes ?? null,
+      }
+      const { data, error } = await supabase
+        .from('task_ai_checklists')
+        .upsert(newChecklist, { onConflict: 'task_id,handyman_id' })
+        .select()
+        .single()
+      if (error) throw new Error('Eroare la salvare checklist')
+      setChecklist(data)
+    } catch (e) {
+      setChecklistError(e.message || 'Generarea a eșuat. Încearcă din nou.')
+    } finally {
+      setChecklistLoading(false)
+    }
+  }
+
+  const toggleItem = async (type, index) => {
+    if (!checklist) return
+    const updated = { ...checklist }
+    updated[type] = updated[type].map((item, i) =>
+      i === index ? { ...item, checked: !item.checked } : item
+    )
+    setChecklist(updated)
+    await supabase
+      .from('task_ai_checklists')
+      .update({ [type]: updated[type] })
+      .eq('id', checklist.id)
+  }
+
+  const showAiTab = task && ['assigned','delayed','scheduled','in_progress','completed'].includes(task.status)
+
   // ── render ────────────────────────────────────────────────────────────────
   return (
     <div
@@ -306,6 +383,33 @@ export default function TaskDetailModal({ taskId, userId, onClose, onNegotiate, 
           </button>
         </div>
 
+        {/* ── TAB NAV — apare doar la taskuri acceptate ── */}
+        {!loading && task && showAiTab && (
+          <div className="flex border-b border-gray-100 flex-shrink-0">
+            <button
+              onClick={() => setActiveTab('detalii')}
+              className={`flex-1 py-2.5 text-sm font-medium transition border-b-2 ${
+                activeTab === 'detalii' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Detalii
+            </button>
+            <button
+              onClick={() => setActiveTab('lista-ai')}
+              className={`flex-1 py-2.5 text-sm font-medium transition border-b-2 flex items-center justify-center gap-1.5 ${
+                activeTab === 'lista-ai' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5"/> Lista AI
+              {checklist && (
+                <span className="text-xs bg-purple-100 text-purple-600 rounded-full px-1.5 py-0.5 font-semibold">
+                  {(checklist.tools?.length ?? 0) + (checklist.materials?.length ?? 0)}
+                </span>
+              )}
+            </button>
+          </div>
+        )}
+
         {/* ── BODY ── */}
         <div className="overflow-y-auto flex-1 p-5 space-y-5">
 
@@ -324,7 +428,121 @@ export default function TaskDetailModal({ taskId, userId, onClose, onNegotiate, 
             </div>
           )}
 
-          {!loading && task && (
+          {/* ── TAB: LISTA AI ── */}
+          {!loading && task && activeTab === 'lista-ai' && (
+            <div className="space-y-4">
+              {/* timp estimat */}
+              {checklist?.estimated_hours && (
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-100 rounded-xl">
+                  <Clock className="w-4 h-4 text-blue-500 flex-shrink-0"/>
+                  <span className="text-sm text-blue-700 font-medium">
+                    Timp estimat: <strong>{checklist.estimated_hours}h</strong>
+                  </span>
+                </div>
+              )}
+
+              {/* nota de siguranță */}
+              {checklist?.safety_notes && (
+                <div className="flex items-start gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5"/>
+                  <p className="text-xs text-amber-700 leading-relaxed">{checklist.safety_notes}</p>
+                </div>
+              )}
+
+              {/* unelte */}
+              {checklist?.tools?.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">
+                    Unelte necesare ({checklist.tools.filter(t => t.checked).length}/{checklist.tools.length})
+                  </p>
+                  <div className="space-y-1.5">
+                    {checklist.tools.map((tool, i) => (
+                      <button
+                        key={i}
+                        onClick={() => toggleItem('tools', i)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition ${
+                          tool.checked
+                            ? 'bg-green-50 border-green-200 text-green-700'
+                            : 'bg-white border-gray-200 text-gray-700 hover:border-blue-200'
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition ${
+                          tool.checked ? 'border-green-500 bg-green-500' : 'border-gray-300'
+                        }`}>
+                          {tool.checked && <CheckCircle className="w-3 h-3 text-white"/>}
+                        </div>
+                        <span className={`text-sm font-medium ${tool.checked ? 'line-through opacity-60' : ''}`}>
+                          {tool.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* materiale */}
+              {checklist?.materials?.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">
+                    Materiale ({checklist.materials.filter(m => m.checked).length}/{checklist.materials.length})
+                  </p>
+                  <div className="space-y-1.5">
+                    {checklist.materials.map((mat, i) => (
+                      <button
+                        key={i}
+                        onClick={() => toggleItem('materials', i)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition ${
+                          mat.checked
+                            ? 'bg-green-50 border-green-200 text-green-700'
+                            : 'bg-white border-gray-200 text-gray-700 hover:border-blue-200'
+                        }`}
+                      >
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition ${
+                          mat.checked ? 'border-green-500 bg-green-500' : 'border-gray-300'
+                        }`}>
+                          {mat.checked && <CheckCircle className="w-3 h-3 text-white"/>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-sm font-medium ${mat.checked ? 'line-through opacity-60' : ''}`}>
+                            {mat.name}
+                          </span>
+                          {(mat.quantity || mat.unit) && (
+                            <span className="text-xs text-gray-400 ml-2">
+                              {mat.quantity} {mat.unit}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* buton generare / regenerare */}
+              {checklistError && (
+                <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0"/>{checklistError}
+                </div>
+              )}
+
+              <button
+                onClick={generateChecklist}
+                disabled={checklistLoading}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-semibold text-sm transition-all
+                  bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700
+                  disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {checklistLoading
+                  ? <><Loader2 className="w-4 h-4 animate-spin"/> Generez lista…</>
+                  : checklist
+                    ? <><Sparkles className="w-4 h-4"/> Regenerează lista cu AI</>
+                    : <><Sparkles className="w-4 h-4"/> Generează lista de instrumente cu AI</>
+                }
+              </button>
+            </div>
+          )}
+
+          {!loading && task && activeTab === 'detalii' && (
             <>
               {/* ── PHOTOS ── */}
               {photos.length > 0
@@ -451,6 +669,7 @@ export default function TaskDetailModal({ taskId, userId, onClose, onNegotiate, 
               )}
             </>
           )}
+          {/* end detalii tab */}
         </div>
 
         {/* ── FOOTER ACTIONS ── */}
