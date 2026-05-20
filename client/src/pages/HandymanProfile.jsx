@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../supabase'
 import DashboardNavbar from '../components/dashboard/DashboardNavbar'
+import BookingModal from '../components/dashboard/client-dashboard/BookingModal'
 import {
   ChevronLeft, MapPin, Clock, Star, CheckCircle, Heart, Share2,
   Calendar, MessageSquare, Shield, Award, Briefcase,
@@ -50,6 +51,10 @@ export default function HandymanProfile() {
   const [services,       setServices]       = useState([])
   const [reviews,        setReviews]        = useState([])
   const [approvedSkills, setApprovedSkills] = useState([])
+
+  // service modal + booking
+  const [selectedService, setSelectedService] = useState(null)
+  const [bookingService,  setBookingService]  = useState(null)
 
   // ── load ──────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -395,7 +400,8 @@ export default function HandymanProfile() {
                   ) : (
                     <div className="grid md:grid-cols-2 gap-4">
                       {services.map(svc=>(
-                        <div key={svc.id} className="border border-gray-100 rounded-xl overflow-hidden hover:shadow-md transition group">
+                        <div key={svc.id} onClick={() => setSelectedService(svc)}
+                          className="border border-gray-100 rounded-xl overflow-hidden hover:shadow-md hover:border-blue-200 transition group cursor-pointer">
 
                           {/* photo */}
                           {Array.isArray(svc.photos)&&svc.photos[0]
@@ -646,38 +652,40 @@ export default function HandymanProfile() {
           {/* ═══ SIDEBAR ═══ */}
           <div className="space-y-4">
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 sticky top-20">
-              {handyman?.hourly_rate&&(
-                <>
-                  <p className="text-xs text-gray-400 text-center mb-1">Tarif de la</p>
-                  <p className="text-3xl font-black text-gray-800 text-center mb-5">
+              {handyman?.hourly_rate && (
+                <div className="text-center mb-4 pb-4 border-b border-gray-100">
+                  <p className="text-xs text-gray-400 mb-1">Tarif orar de la</p>
+                  <p className="text-3xl font-black text-gray-800">
                     {Number(handyman.hourly_rate)} <span className="text-base font-normal text-gray-400">RON/h</span>
                   </p>
-                </>
+                </div>
               )}
 
-              <button onClick={()=>navigate(`/book/${slug}`)}
-                className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-blue-700 transition mb-2">
-                <Calendar className="w-4 h-4"/> Rezervă acum
-              </button>
-              <button className="w-full flex items-center justify-center gap-2 border border-gray-200 text-gray-600 py-3 rounded-xl font-medium text-sm hover:bg-gray-50 transition">
-                <MessageSquare className="w-4 h-4"/> Trimite mesaj
-              </button>
+              {services.length > 0 && (
+                <p className="text-xs text-center text-blue-600 font-medium mb-4">
+                  Apasă pe un serviciu pentru a rezerva
+                </p>
+              )}
 
-              <div className="mt-5 pt-4 border-t border-gray-100 space-y-2.5 text-sm text-gray-600">
+              <div className="space-y-2.5 text-sm text-gray-600">
                 <div className="flex justify-between">
                   <span>Lucrări finalizate</span>
-                  <span className="font-semibold text-gray-800">{handyman?.total_jobs_completed??0}</span>
+                  <span className="font-semibold text-gray-800">{handyman?.total_jobs_completed ?? 0}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Rating mediu</span>
-                  <span className="font-semibold text-gray-800">{ratingAvg>0?Number(ratingAvg).toFixed(1):'—'}</span>
+                  <span className="font-semibold text-gray-800">{ratingAvg > 0 ? Number(ratingAvg).toFixed(1) : '—'}</span>
                 </div>
-                {handyman?.experience_years&&(
+                {handyman?.experience_years && (
                   <div className="flex justify-between">
                     <span>Experiență</span>
                     <span className="font-semibold text-gray-800">{handyman.experience_years} ani</span>
                   </div>
                 )}
+                <div className="flex justify-between">
+                  <span>Servicii active</span>
+                  <span className="font-semibold text-gray-800">{services.length}</span>
+                </div>
               </div>
             </div>
 
@@ -777,6 +785,115 @@ export default function HandymanProfile() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Service Detail Modal ── */}
+      {selectedService && !bookingService && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            {/* Header photo */}
+            {Array.isArray(selectedService.photos) && selectedService.photos[0]
+              ? <img src={selectedService.photos[0]} alt="" className="w-full h-52 object-cover rounded-t-2xl"/>
+              : <div className="w-full h-52 bg-gradient-to-br from-blue-100 to-blue-200 rounded-t-2xl flex items-center justify-center">
+                  <Wrench className="w-16 h-16 text-blue-400"/>
+                </div>
+            }
+
+            <div className="p-6">
+              <div className="flex items-start justify-between mb-1">
+                <h2 className="text-xl font-bold text-gray-800">{selectedService.title}</h2>
+                <button onClick={() => setSelectedService(null)} className="text-gray-400 hover:text-gray-600 ml-3 flex-shrink-0">
+                  <X className="w-5 h-5"/>
+                </button>
+              </div>
+              {selectedService.categories && (
+                <p className="text-xs text-blue-500 font-semibold mb-3">{selectedService.categories.name}</p>
+              )}
+
+              {selectedService.description && (
+                <p className="text-sm text-gray-600 leading-relaxed mb-5">{selectedService.description}</p>
+              )}
+
+              {/* Prices */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <div className="bg-blue-50 rounded-xl p-3 text-center">
+                  <p className="text-[11px] text-blue-400 font-medium mb-0.5">Preț de bază</p>
+                  <p className="text-lg font-black text-blue-700">
+                    {selectedService.base_price ? `${Number(selectedService.base_price).toLocaleString('ro-RO')} RON` : '—'}
+                  </p>
+                </div>
+                <div className="bg-purple-50 rounded-xl p-3 text-center">
+                  <p className="text-[11px] text-purple-400 font-medium mb-0.5">Pe oră</p>
+                  <p className="text-lg font-black text-purple-700">
+                    {selectedService.price_per_hour ? `${Number(selectedService.price_per_hour).toLocaleString('ro-RO')} RON/h` : '—'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Stats */}
+              <div className="flex items-center gap-4 text-xs text-gray-500 mb-5 p-3 bg-gray-50 rounded-xl">
+                <div className="flex items-center gap-1.5">
+                  <Briefcase className="w-3.5 h-3.5 text-gray-400"/>
+                  <span><strong className="text-gray-700">{selectedService.times_booked ?? 0}</strong> rezervări</span>
+                </div>
+                {selectedService.estimated_duration && (
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-gray-400"/>
+                    <span>{selectedService.estimated_duration}</span>
+                  </div>
+                )}
+                {selectedService.is_popular && (
+                  <span className="ml-auto px-2 py-0.5 bg-yellow-50 text-yellow-600 font-semibold rounded-full border border-yellow-100">
+                    🔥 Popular
+                  </span>
+                )}
+              </div>
+
+              {/* Keywords */}
+              {Array.isArray(selectedService.keywords) && selectedService.keywords.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-5">
+                  {selectedService.keywords.map(tag => (
+                    <span key={tag} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-md font-medium">{tag}</span>
+                  ))}
+                </div>
+              )}
+
+              {/* Handyman mini-card */}
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl mb-5">
+                {profile?.avatar_url
+                  ? <img src={profile.avatar_url} alt="" className="w-10 h-10 rounded-full object-cover"/>
+                  : <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
+                      {profile?.first_name?.[0]}{profile?.last_name?.[0]}
+                    </div>
+                }
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">{profile?.first_name} {profile?.last_name}</p>
+                  <div className="flex items-center gap-1">
+                    <Star className="w-3 h-3 fill-yellow-400 text-yellow-400"/>
+                    <span className="text-xs text-gray-500">{ratingAvg > 0 ? Number(ratingAvg).toFixed(1) : '—'} · {handyman?.total_jobs_completed ?? 0} lucrări</span>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => { setBookingService(selectedService); setSelectedService(null) }}
+                className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-3 rounded-xl font-semibold text-sm hover:bg-blue-700 transition">
+                <Calendar className="w-4 h-4"/> Rezervă acest serviciu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Booking Modal ── */}
+      {bookingService && (
+        <BookingModal
+          service={bookingService}
+          handyman={{ ...handyman, profiles: profile }}
+          userId={currentUserId}
+          onClose={() => setBookingService(null)}
+          onSuccess={() => { setBookingService(null); navigate('/dashboard') }}
+        />
       )}
     </div>
   )

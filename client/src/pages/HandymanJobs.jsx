@@ -6,6 +6,7 @@ import JobRequestModal from '../components/handyman-dashboard/JobRequestModal'
 import CompletedJobModal from '../components/handyman-dashboard/CompletedJobModal'
 import TaskRequestModal from '../components/handyman-dashboard/TaskRequestModal'
 import HandymanDisputeModal from '../components/handyman-dashboard/HandymanDisputeModal'
+import TaskDetailModal from '../components/handyman-dashboard/TaskDetailModal'
 import {
   Search, Calendar, MapPin, Camera, CheckCircle,
   XCircle, MessageSquare, Play, RefreshCw, Loader2,
@@ -141,8 +142,8 @@ const STATUS_TABS_ROW1 = [
   { id: 'all',         label: 'Toate' },
   { id: 'new',         label: 'Noi' },
   { id: 'accepted',    label: 'Acceptate' },
-  { id: 'in_progress', label: 'În Progres' },
   { id: 'delayed',     label: 'Întârziate' },
+  { id: 'in_progress', label: 'În Progres' },
   { id: 'completed',   label: 'Finalizate' },
 ]
 // Rând 2: cozi speciale
@@ -178,6 +179,7 @@ export default function HandymanJobs() {
   const [selectedJob,           setSelectedJob]           = useState(null)
   const [completedJob,          setCompletedJob]          = useState(null)
   const [startingId,            setStartingId]            = useState(null)
+  const [taskDetailId,          setTaskDetailId]          = useState(null) // TaskDetailModal cu AI tab
   const [pendingRescheduleId,   setPendingRescheduleId]   = useState(null)
   const [negotiateTask,         setNegotiateTask]         = useState(null)
   const [offerForm,             setOfferForm]             = useState({ proposed_price: '', estimated_duration: '', message: '', available_date: '', available_time: '' })
@@ -189,6 +191,9 @@ export default function HandymanJobs() {
 
   const [handymanName,   setHandymanName]   = useState('')
   const [reworkStartJob, setReworkStartJob] = useState(null)   // job waiting for anti-bot before start
+  const [delayJobId,     setDelayJobId]     = useState(null)   // job being reported as delayed
+  const [delayForm,      setDelayForm]      = useState({ minutes: 15, reason: '' })
+  const [reportingDelay, setReportingDelay] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -302,6 +307,23 @@ export default function HandymanJobs() {
         .map(normaliseTask)
       setProposedJobs(proposed)
 
+      // Auto-detecție delayed: taskuri assigned cu scheduled_date+time în trecut
+      const nowMs = Date.now()
+      const overdueIds = assignedTasks
+        .filter(j => j._type === 'task' && j.uiStatus === 'accepted' && j._raw?.scheduled_date && j._raw?.scheduled_time)
+        .filter(j => new Date(`${j._raw.scheduled_date}T${j._raw.scheduled_time}`).getTime() < nowMs - 5 * 60 * 1000)
+        .map(j => j._id)
+      if (overdueIds.length > 0) {
+        await supabase.from('tasks')
+          .update({ status: 'delayed', updated_at: new Date().toISOString() })
+          .in('id', overdueIds)
+          .eq('status', 'assigned')
+        overdueIds.forEach(id => {
+          const job = assignedTasks.find(j => j._id === id)
+          if (job) job.uiStatus = 'delayed'
+        })
+      }
+
       const all = [...bookings, ...assignedTasks].sort(
         (a, b) => new Date(b.created_at) - new Date(a.created_at)
       )
@@ -345,6 +367,42 @@ export default function HandymanJobs() {
         },
       })
     }
+    await fetchJobs(true)
+  }
+
+  const handleReportDelay = async (job) => {
+    setReportingDelay(true)
+    const now = new Date().toISOString()
+    if (job._type === 'task') {
+      await supabase.from('tasks').update({
+        status: 'delayed',
+        delay_minutes: delayForm.minutes,
+        delay_reason: delayForm.reason || null,
+        delay_reported_at: now,
+        updated_at: now,
+      }).eq('id', job._id)
+    } else {
+      await supabase.from('bookings').update({
+        status: 'delayed',
+        updated_at: now,
+      }).eq('id', job._id)
+    }
+
+    if (job.clientId) {
+      const notifType = job._type === 'booking' ? 'booking_delayed' : 'task_delayed'
+      const reasonPart = delayForm.reason ? ` — „${delayForm.reason}"` : ''
+      await supabase.from('notifications').insert({
+        user_id: job.clientId,
+        type: notifType,
+        title: 'Lucrarea ta este întârziată',
+        body: `Meșterul a anunțat o întârziere de ~${delayForm.minutes} minute${reasonPart}. Deschide secțiunea Întârziate pentru a gestiona lucrarea.`,
+        data: { job_id: job._id, job_type: job._type, delay_reason: delayForm.reason || null, redirect: '/dashboard' },
+      })
+    }
+
+    setDelayJobId(null)
+    setDelayForm({ minutes: 15, reason: '' })
+    setReportingDelay(false)
     await fetchJobs(true)
   }
 
@@ -431,6 +489,15 @@ export default function HandymanJobs() {
   const handleCardClick = (job) => {
     if (job.uiStatus === 'completed') {
       setCompletedJob(job)
+    } else if (job.uiStatus === 'delayed') {
+      // For delayed tasks prefer the TaskDetailModal (with AI tab)
+      if (job._type === 'task') {
+        setTaskDetailId(job._id)
+      } else {
+        setSelectedJob({ job, mode: 'details' })
+      }
+    } else if (job._type === 'task') {
+      setTaskDetailId(job._id) // deschide TaskDetailModal cu tab-urile Detalii / Lista AI
     } else {
       setSelectedJob({ job, mode: job.uiStatus === 'in_progress' ? 'complete' : 'details' })
     }
@@ -559,7 +626,14 @@ export default function HandymanJobs() {
                 onMessage={(j) => navigate(`/handyman/messages?${j._type}_id=${j._id}`)}
                 activeReworkTaskIds={activeReworkTaskIds}
                 scheduledReworkTaskIds={scheduledReworkTaskIds}
-                acceptedReworkByTask={acceptedReworkByTask} />
+                acceptedReworkByTask={acceptedReworkByTask}
+                delayJobId={delayJobId}
+                delayForm={delayForm}
+                setDelayForm={setDelayForm}
+                reportingDelay={reportingDelay}
+                onReportDelay={(j) => setDelayJobId(j._id)}
+                onConfirmDelay={(j) => handleReportDelay(j)}
+                onCancelDelay={() => { setDelayJobId(null); setDelayForm({ minutes: 15, reason: '' }) }} />
             ))}
           </div>
         )}
@@ -601,6 +675,15 @@ export default function HandymanJobs() {
         onClose={() => setNegotiateTask(null)}
         sending={sendingOffer}
       />
+
+      {taskDetailId && (
+        <TaskDetailModal
+          taskId={taskDetailId}
+          userId={userId}
+          onClose={() => setTaskDetailId(null)}
+          onNegotiate={() => setTaskDetailId(null)}
+        />
+      )}
       {reworkStartJob && (
         <ReworkStartModal
           job={reworkStartJob}
@@ -751,7 +834,7 @@ function TabButton({ tab, activeTab, setActiveTab, tabCount, proposedJobs, dispu
 
 // ─── JOB CARD ─────────────────────────────────────────────────────────────────
 
-function JobCard({ job, startingId, onOpen, onOpenModal, onStartJob, onMessage, activeReworkTaskIds, scheduledReworkTaskIds, acceptedReworkByTask }) {
+function JobCard({ job, startingId, onOpen, onOpenModal, onStartJob, onMessage, activeReworkTaskIds, scheduledReworkTaskIds, acceptedReworkByTask, delayJobId, delayForm, setDelayForm, reportingDelay, onReportDelay, onConfirmDelay, onCancelDelay }) {
   const isStarting      = startingId === job._id
   const hasActiveRework = job.isRework && (activeReworkTaskIds?.has(job._id) ?? false)
   const isScheduled     = job.isRework && (scheduledReworkTaskIds?.has(job._id) ?? false)
@@ -797,6 +880,9 @@ function JobCard({ job, startingId, onOpen, onOpenModal, onStartJob, onMessage, 
       <div className="p-5">
         <div className="flex items-start justify-between mb-2">
           <div className="flex-1 min-w-0 pr-3">
+            {job._id && (
+              <span className="inline-block text-[10px] font-mono font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded mb-0.5">#{job._id.replace(/-/g,'').slice(0,7).toUpperCase()}</span>
+            )}
             <h3 className="font-bold text-gray-800 leading-snug">{job.title}</h3>
             <p className="text-sm text-gray-500 mt-0.5">{job.client}</p>
           </div>
@@ -836,15 +922,52 @@ function JobCard({ job, startingId, onOpen, onOpenModal, onStartJob, onMessage, 
             </button>
           </>}
           {job.uiStatus === 'accepted' && <>
-            <button onClick={e => onStartJob(job, e)} disabled={isStarting}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition disabled:opacity-60">
-              {isStarting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-              {job.isRework ? 'Începe Relucrarea' : 'Începe Job'}
-            </button>
-            <button onClick={() => onOpenModal(job, 'reschedule')}
-              className="flex items-center justify-center gap-1 px-3 py-2 border border-gray-200 text-gray-400 text-xs font-medium rounded-lg hover:bg-gray-50 hover:text-blue-600 hover:border-blue-300 transition" title="Reprogramează">
-              <CalendarClock className="w-3.5 h-3.5" />
-            </button>
+            {delayJobId === job._id ? (
+              <div className="w-full space-y-2" onClick={e => e.stopPropagation()}>
+                <p className="text-xs font-bold text-orange-700 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Raportează întârziere</p>
+                <div className="flex gap-2">
+                  <select
+                    value={delayForm.minutes}
+                    onChange={e => setDelayForm(prev => ({ ...prev, minutes: parseInt(e.target.value) }))}
+                    className="flex-1 px-2 py-1.5 border border-orange-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  >
+                    {[15,30,45,60,90,120].map(m => (
+                      <option key={m} value={m}>{m} minute</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Motiv (opțional)"
+                    value={delayForm.reason}
+                    onChange={e => setDelayForm(prev => ({ ...prev, reason: e.target.value }))}
+                    className="flex-[2] px-2 py-1.5 border border-orange-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={onCancelDelay} className="flex-1 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-500 hover:bg-gray-50 transition">Anulează</button>
+                  <button onClick={() => onConfirmDelay(job)} disabled={reportingDelay}
+                    className="flex-[2] flex items-center justify-center gap-1 py-1.5 bg-orange-500 text-white rounded-lg text-xs font-bold hover:bg-orange-600 transition disabled:opacity-60">
+                    {reportingDelay ? <Loader2 className="w-3 h-3 animate-spin" /> : <><AlertTriangle className="w-3 h-3" /> Confirmă întârzierea</>}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button onClick={e => onStartJob(job, e)} disabled={isStarting}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition disabled:opacity-60">
+                  {isStarting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                  {job.isRework ? 'Începe Relucrarea' : 'Începe Job'}
+                </button>
+                <button onClick={e => { e.stopPropagation(); onReportDelay(job) }}
+                  className="flex items-center justify-center gap-1 px-3 py-2 border border-orange-200 text-orange-500 text-xs font-medium rounded-lg hover:bg-orange-50 transition" title="Raportez întârziere">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => onOpenModal(job, 'reschedule')}
+                  className="flex items-center justify-center gap-1 px-3 py-2 border border-gray-200 text-gray-400 text-xs font-medium rounded-lg hover:bg-gray-50 hover:text-blue-600 hover:border-blue-300 transition" title="Reprogramează">
+                  <CalendarClock className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
           </>}
           {job.uiStatus === 'in_progress' && !job.disputeLocked && <>
             <button onClick={() => onOpenModal(job, 'complete')}
@@ -861,14 +984,52 @@ function JobCard({ job, startingId, onOpen, onOpenModal, onStartJob, onMessage, 
             </div>
           )}
           {job.uiStatus === 'delayed' && <>
-            <button onClick={() => onOpenModal(job, 'details')}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-orange-600 text-white text-xs font-medium rounded-lg hover:bg-orange-700 transition">
-              <AlertTriangle className="w-3.5 h-3.5" /> Gestionează Întârzierea
-            </button>
-            <button onClick={() => onOpenModal(job, 'complete')}
-              className="flex items-center justify-center gap-1 px-3 py-2 border border-green-200 text-green-700 text-xs font-medium rounded-lg hover:bg-green-50 transition">
-              <CheckCircle className="w-3.5 h-3.5" />
-            </button>
+            {delayJobId === job._id ? (
+              <div className="w-full space-y-2" onClick={e => e.stopPropagation()}>
+                <p className="text-xs font-bold text-orange-700 flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> Actualizează întârzierea</p>
+                <div className="flex gap-2">
+                  <select
+                    value={delayForm.minutes}
+                    onChange={e => setDelayForm(prev => ({ ...prev, minutes: parseInt(e.target.value) }))}
+                    className="flex-1 px-2 py-1.5 border border-orange-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  >
+                    {[15,30,45,60,90,120].map(m => (
+                      <option key={m} value={m}>{m} minute</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    placeholder="Motiv actualizat (opțional)"
+                    value={delayForm.reason}
+                    onChange={e => setDelayForm(prev => ({ ...prev, reason: e.target.value }))}
+                    className="flex-[2] px-2 py-1.5 border border-orange-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-400"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={onCancelDelay} className="flex-1 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-500 hover:bg-gray-50 transition">Anulează</button>
+                  <button onClick={() => onConfirmDelay(job)} disabled={reportingDelay}
+                    className="flex-[2] flex items-center justify-center gap-1 py-1.5 bg-orange-500 text-white rounded-lg text-xs font-bold hover:bg-orange-600 transition disabled:opacity-60">
+                    {reportingDelay ? <Loader2 className="w-3 h-3 animate-spin" /> : <><RefreshCw className="w-3 h-3" /> Trimite actualizarea</>}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <button onClick={e => onStartJob(job, e)} disabled={isStarting}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition disabled:opacity-60">
+                  {isStarting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                  Începe Job
+                </button>
+                <button onClick={() => onOpen(job)}
+                  className="flex items-center justify-center gap-1 px-3 py-2 border border-orange-200 text-orange-600 text-xs font-medium rounded-lg hover:bg-orange-50 transition" title="Gestionează întârzierea">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={e => { e.stopPropagation(); onReportDelay(job) }}
+                  className="flex items-center justify-center gap-1 px-3 py-2 border border-orange-200 text-orange-400 text-xs font-medium rounded-lg hover:bg-orange-50 transition" title="Actualizează întârzierea">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
           </>}
           {job.uiStatus === 'completed' && job.isReworkCompleted && (
             <button onClick={() => onOpen(job)} className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-yellow-50 border border-yellow-200 text-yellow-700 text-xs font-medium rounded-lg hover:bg-yellow-100 transition">
@@ -900,6 +1061,34 @@ function ProposedJobCard({ job, userId, handymanName, onAccepted, onNegotiate })
     e.stopPropagation()
     setAccepting(true)
     try {
+      // Verifică conflict dacă taskul are dată preferată
+      const rawTask = job._raw
+      if (rawTask?.scheduled_date && rawTask?.scheduled_time) {
+        const toM = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+        const newStart = toM(rawTask.scheduled_time)
+
+        const [{ data: tConf }, { data: bConf }] = await Promise.all([
+          supabase.from('tasks').select('id, scheduled_time, scheduled_end_time, estimated_duration_minutes')
+            .eq('handyman_id', userId).eq('scheduled_date', rawTask.scheduled_date)
+            .in('status', ['assigned', 'accepted', 'in_progress', 'delayed']).limit(5),
+          supabase.from('bookings').select('id, scheduled_time')
+            .eq('handyman_id', userId).eq('scheduled_date', rawTask.scheduled_date)
+            .in('status', ['upcoming', 'confirmed', 'accepted']).limit(5),
+        ])
+
+        const overlap = [...(tConf || []), ...(bConf || [])].some(t => {
+          const s = toM(t.scheduled_time)
+          const e = t.scheduled_end_time ? toM(t.scheduled_end_time) : s + (t.estimated_duration_minutes || 60)
+          return newStart >= s && newStart < e
+        })
+
+        if (overlap) {
+          const dateLabel = new Date(rawTask.scheduled_date + 'T00:00:00').toLocaleDateString('ro-RO', { day: '2-digit', month: 'long' })
+          alert(`Ești deja ocupat pe ${dateLabel} la ${rawTask.scheduled_time}.\n\nFolosește butonul "Negociază" pentru a propune o altă dată.`)
+          return
+        }
+      }
+
       const { data: updated, error: updateError } = await supabase.from('tasks').update({
         status: 'assigned',
         handyman_id: userId,

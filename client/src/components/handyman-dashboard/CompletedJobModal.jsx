@@ -4,8 +4,30 @@ import {
   X, Star, CheckCircle, Clock, Camera, FileText,
   Banknote, ChevronLeft, ChevronRight, Loader2,
   Briefcase, Tag, AlertCircle, ThumbsUp, ThumbsDown,
-  User
+  User, Copy
 } from 'lucide-react'
+
+function TaskRefBadge({ id }) {
+  const [copied, setCopied] = useState(false)
+  if (!id) return null
+  const ref = '#' + id.replace(/-/g, '').slice(0, 7).toUpperCase()
+  const copy = (e) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(ref).catch(() => {})
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button
+      onClick={copy}
+      title="Copiază referința"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 hover:bg-blue-50 hover:border-blue-200 border border-gray-200 text-gray-500 hover:text-blue-600 rounded-lg text-xs font-mono font-bold transition-all"
+    >
+      {copied ? <CheckCircle className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      {copied ? <span className="text-green-600">Copiat!</span> : ref}
+    </button>
+  )
+}
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -117,6 +139,7 @@ export default function CompletedJobModal({ job, onClose }) {
                 </span>
               </div>
               <h2 className="text-base font-bold text-gray-800 leading-snug">{job.title}</h2>
+              <div className="mt-1.5"><TaskRefBadge id={job._id} /></div>
               <p className="text-sm text-gray-500 mt-0.5">{job.client}</p>
             </div>
             <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center flex-shrink-0">

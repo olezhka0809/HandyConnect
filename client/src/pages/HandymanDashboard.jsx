@@ -20,7 +20,15 @@ import {
   CalendarClock,
   Loader2,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
+
+// Returnează data locală curentă ca string "YYYY-MM-DD" (fără bug de timezone)
+const localToday = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
 
 function fmtDate(dateStr, timeStr) {
   if (!dateStr) return '—'
@@ -149,6 +157,8 @@ export default function HandymanDashboard() {
 
   const [selectedTaskId, setSelectedTaskId] = useState(null)
   const [selectedJob, setSelectedJob] = useState(null)
+  const [selectedEarning, setSelectedEarning] = useState(null) // modal detalii câștig
+  const [billingData, setBillingData] = useState(null) // date facturare meșter
   const [chartMetric, setChartMetric] = useState('revenue')
   const [hoveredChartIdx, setHoveredChartIdx] = useState(null)
   const [earningsRange, setEarningsRange] = useState('7d')
@@ -157,6 +167,8 @@ export default function HandymanDashboard() {
   const [recentJobs, setRecentJobs] = useState(null)
   const [todayItems, setTodayItems] = useState(null)
   const [startingJobId, setStartingJobId] = useState(null)
+  const [scheduleDate, setScheduleDate] = useState(localToday())
+  const [scheduleLoading, setScheduleLoading] = useState(false)
 
   const [insightRange, setInsightRange] = useState('3m')
   const [stats, setStats] = useState({
@@ -236,12 +248,21 @@ export default function HandymanDashboard() {
 
       const [profileRes, hpRes, newRequestsRes, activeRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
-        supabase.from('handyman_profiles').select('rating_avg').eq('user_id', user.id).maybeSingle(),
+        supabase.from('handyman_profiles').select('rating_avg, billing_company, billing_cui, billing_address, billing_iban, billing_bank').eq('user_id', user.id).maybeSingle(),
         supabase.from('tasks').select('id', { count: 'exact', head: true }).contains('proposed_to', [user.id]).eq('status', 'open'),
         supabase.from('tasks').select('id', { count: 'exact', head: true }).eq('handyman_id', user.id).in('status', ['in_progress', 'accepted', 'assigned']),
       ])
 
       setProfile(profileRes.data)
+      if (hpRes.data) {
+        setBillingData({
+          company_name: hpRes.data.billing_company || '',
+          cui:          hpRes.data.billing_cui     || '',
+          address:      hpRes.data.billing_address || '',
+          iban:         hpRes.data.billing_iban    || '',
+          bank:         hpRes.data.billing_bank    || '',
+        })
+      }
 
       const [completedTasksRes, completedBookingsRes, reviewsRes] = await Promise.all([
         supabase.from('tasks')
@@ -365,48 +386,61 @@ export default function HandymanDashboard() {
 
       setRecentJobs(combined)
 
-      const todayISO = new Date().toISOString().split('T')[0]
-      const [todayTasksRes, todayBookingsRes] = await Promise.all([
-        supabase.from('tasks')
-          .select('id, title, scheduled_time, status, profiles!tasks_client_id_fkey(first_name, last_name)')
-          .eq('handyman_id', user.id)
-          .eq('scheduled_date', todayISO)
-          .in('status', ['accepted', 'assigned', 'in_progress'])
-          .order('scheduled_time', { ascending: true }),
+      setTodayItems(await fetchScheduleForDate(user.id, localToday()))
+    }
 
+    async function fetchScheduleForDate(uid, dateISO) {
+      const [tasksRes, bookingsRes] = await Promise.all([
+        supabase.from('tasks')
+          .select('id, title, scheduled_time, scheduled_end_time, estimated_duration_minutes, status, urgency, address_city, service_address, profiles!tasks_client_id_fkey(first_name, last_name)')
+          .eq('handyman_id', uid)
+          .eq('scheduled_date', dateISO)
+          .in('status', ['accepted', 'assigned', 'in_progress', 'delayed'])
+          .order('scheduled_time', { ascending: true }),
         supabase.from('bookings')
-          .select('id, contact_name, scheduled_time, status, handyman_services(title)')
-          .eq('handyman_id', user.id)
-          .eq('scheduled_date', todayISO)
+          .select('id, contact_name, scheduled_time, status, service_address, handyman_services(title, estimated_duration)')
+          .eq('handyman_id', uid)
+          .eq('scheduled_date', dateISO)
           .in('status', ['confirmed', 'upcoming', 'accepted', 'pending'])
           .order('scheduled_time', { ascending: true }),
       ])
 
-      const todayTasks = (todayTasksRes.data ?? []).map((t) => ({
-        id: t.id,
-        _type: 'task',
-        title: t.title,
-        time: t.scheduled_time ?? '—',
-        status: t.status,
-        client: t.profiles ? `${t.profiles.first_name ?? ''} ${t.profiles.last_name ?? ''}`.trim() || 'Client' : 'Client',
-      }))
+      const toMins = t => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + m }
 
-      const todayBookings = (todayBookingsRes.data ?? []).map((b) => ({
-        id: b.id,
-        _type: 'booking',
-        title: b.handyman_services?.title ?? `Rezervare #${b.id.slice(0, 6)}`,
-        time: b.scheduled_time ?? '—',
-        status: b.status,
-        client: b.contact_name ?? 'Client',
-      }))
-
-      const allToday = [...todayTasks, ...todayBookings].sort((a, b) => {
-        if (a.time === '—') return 1
-        if (b.time === '—') return -1
-        return a.time.localeCompare(b.time)
+      const tasks = (tasksRes.data ?? []).map(t => {
+        const startMins = toMins(t.scheduled_time)
+        const dur = t.estimated_duration_minutes || null
+        const endMins = t.scheduled_end_time ? toMins(t.scheduled_end_time) : (startMins && dur ? startMins + dur : null)
+        return {
+          id: t.id, _type: 'task', title: t.title,
+          time: t.scheduled_time ?? '—',
+          endTime: t.scheduled_end_time ?? (endMins ? `${String(Math.floor(endMins/60)).padStart(2,'0')}:${String(endMins%60).padStart(2,'0')}` : null),
+          durationMin: dur, startMins, endMins,
+          status: t.status, urgency: t.urgency ?? 'normal',
+          location: t.address_city || t.service_address || null,
+          client: t.profiles ? `${t.profiles.first_name ?? ''} ${t.profiles.last_name ?? ''}`.trim() || 'Client' : 'Client',
+        }
       })
 
-      setTodayItems(allToday)
+      const bookings = (bookingsRes.data ?? []).map(b => {
+        const startMins = toMins(b.scheduled_time)
+        const dur = parseInt(b.handyman_services?.estimated_duration ?? '') || null
+        const endMins = startMins && dur ? startMins + dur : null
+        return {
+          id: b.id, _type: 'booking',
+          title: b.handyman_services?.title ?? `Rezervare #${b.id.slice(0, 6)}`,
+          time: b.scheduled_time ?? '—',
+          endTime: endMins ? `${String(Math.floor(endMins/60)).padStart(2,'0')}:${String(endMins%60).padStart(2,'0')}` : null,
+          durationMin: dur, startMins, endMins,
+          status: b.status, urgency: 'normal',
+          location: b.service_address || null,
+          client: b.contact_name ?? 'Client',
+        }
+      })
+
+      return [...tasks, ...bookings]
+        .filter(item => item.time && item.time !== '—') // exclude fără oră programată
+        .sort((a, b) => a.time.localeCompare(b.time))
     }
 
     loadData()
@@ -418,6 +452,69 @@ export default function HandymanDashboard() {
     await supabase.from(table).update({ status: 'in_progress', updated_at: new Date().toISOString() }).eq('id', item.id)
     setTodayItems((prev) => (prev ?? []).map((i) => (i.id === item.id ? { ...i, status: 'in_progress' } : i)))
     setStartingJobId(null)
+  }
+
+  const handleScheduleDateChange = async (newDate) => {
+    if (!profile) return
+    setScheduleDate(newDate)
+    setScheduleLoading(true)
+    setTodayItems(null)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const [tasksRes, bookingsRes] = await Promise.all([
+      supabase.from('tasks')
+        .select('id, title, scheduled_time, scheduled_end_time, estimated_duration_minutes, status, urgency, address_city, service_address, profiles!tasks_client_id_fkey(first_name, last_name)')
+        .eq('handyman_id', user.id)
+        .eq('scheduled_date', newDate)
+        .in('status', ['accepted', 'assigned', 'in_progress', 'delayed'])
+        .order('scheduled_time', { ascending: true }),
+      supabase.from('bookings')
+        .select('id, contact_name, scheduled_time, status, service_address, handyman_services(title, estimated_duration)')
+        .eq('handyman_id', user.id)
+        .eq('scheduled_date', newDate)
+        .in('status', ['confirmed', 'upcoming', 'accepted', 'pending'])
+        .order('scheduled_time', { ascending: true }),
+    ])
+
+    const toMins = t => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + m }
+
+    const tasks = (tasksRes.data ?? []).map(t => {
+      const startMins = toMins(t.scheduled_time)
+      const dur = t.estimated_duration_minutes || null
+      const endMins = t.scheduled_end_time ? toMins(t.scheduled_end_time) : (startMins && dur ? startMins + dur : null)
+      return {
+        id: t.id, _type: 'task', title: t.title,
+        time: t.scheduled_time ?? '—',
+        endTime: t.scheduled_end_time ?? (endMins ? `${String(Math.floor(endMins/60)).padStart(2,'0')}:${String(endMins%60).padStart(2,'0')}` : null),
+        durationMin: dur, startMins, endMins,
+        status: t.status, urgency: t.urgency ?? 'normal',
+        location: t.address_city || t.service_address || null,
+        client: t.profiles ? `${t.profiles.first_name ?? ''} ${t.profiles.last_name ?? ''}`.trim() || 'Client' : 'Client',
+      }
+    })
+
+    const bookings = (bookingsRes.data ?? []).map(b => {
+      const startMins = toMins(b.scheduled_time)
+      const dur = parseInt(b.handyman_services?.estimated_duration ?? '') || null
+      const endMins = startMins && dur ? startMins + dur : null
+      return {
+        id: b.id, _type: 'booking',
+        title: b.handyman_services?.title ?? `Rezervare #${b.id.slice(0, 6)}`,
+        time: b.scheduled_time ?? '—',
+        endTime: endMins ? `${String(Math.floor(endMins/60)).padStart(2,'0')}:${String(endMins%60).padStart(2,'0')}` : null,
+        durationMin: dur, startMins, endMins,
+        status: b.status, urgency: 'normal',
+        location: b.service_address || null,
+        client: b.contact_name ?? 'Client',
+      }
+    })
+
+    setTodayItems([...tasks, ...bookings]
+      .filter(item => item.time && item.time !== '—')
+      .sort((a, b) => a.time.localeCompare(b.time))
+    )
+    setScheduleLoading(false)
   }
 
   const chartData = buildRevenueSeries(insights.completedEntries, insightRange)
@@ -471,6 +568,91 @@ export default function HandymanDashboard() {
         <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
       </div>
     )
+  }
+
+  const LOGO_URL = 'https://rfsombznaebjvfufxffc.supabase.co/storage/v1/object/public/assets/logo.svg'
+
+  function generateInvoiceForEarning(row) {
+    const b = billingData || {}
+    if (!b.company_name?.trim() || !b.cui?.trim() || !b.iban?.trim()) {
+      alert('Completează mai întâi datele de facturare (Nume/Firmă, CUI/CNP, IBAN) în secțiunea Profil → Date Facturare.')
+      return
+    }
+    const now       = new Date().toLocaleDateString('ro-RO')
+    const invoiceNo = `HC-${Date.now().toString().slice(-6)}`
+    const html = `<!DOCTYPE html><html lang="ro"><head><meta charset="UTF-8"/>
+      <title>Factură ${invoiceNo}</title>
+      <style>
+        * { margin:0; padding:0; box-sizing:border-box; font-family: Arial, sans-serif; }
+        body { padding: 40px; color: #1a1a1a; }
+        .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:36px; border-bottom:3px solid #2563EB; padding-bottom:20px; }
+        .site { font-size:11px; color:#9CA3AF; margin-top:3px; }
+        .invoice-title { font-size:30px; font-weight:800; color:#111; letter-spacing:-1px; }
+        .invoice-meta { color:#6B7280; font-size:13px; margin-top:4px; line-height:1.8; }
+        .parties { display:grid; grid-template-columns:1fr 1fr; gap:40px; margin-bottom:32px; }
+        .party { background:#F9FAFB; border-radius:8px; padding:16px 20px; }
+        .party h3 { font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#9CA3AF; margin-bottom:10px; }
+        .party p { font-size:13px; line-height:1.75; color:#374151; }
+        .party strong { color:#111; font-size:14px; }
+        table { width:100%; border-collapse:collapse; }
+        thead tr { background:#EFF6FF; }
+        th { padding:10px 14px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#2563EB; font-weight:700; }
+        td { padding:11px 14px; font-size:13px; border-bottom:1px solid #F3F4F6; }
+        .total-section { border-top:2px solid #2563EB; padding:16px 14px; text-align:right; }
+        .total-amount { font-size:22px; font-weight:800; color:#111; margin-top:2px; }
+        .footer { margin-top:36px; padding-top:14px; border-top:1px solid #E5E7EB; font-size:11px; color:#9CA3AF; text-align:center; }
+        @media print { body { padding: 24px; } }
+      </style></head>
+      <body>
+        <div class="header">
+          <div>
+            <img src="${LOGO_URL}" alt="HandyConnect" height="44" style="height:44px" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"/>
+            <div style="display:none;font-size:22px;font-weight:800;color:#2563EB">HandyConnect</div>
+            <div class="site">handyconnect.ro</div>
+          </div>
+          <div style="text-align:right">
+            <div class="invoice-title">FACTURĂ</div>
+            <div class="invoice-meta">Nr. <strong>${invoiceNo}</strong><br/>Data: ${now}</div>
+          </div>
+        </div>
+        <div class="parties">
+          <div class="party">
+            <h3>Prestator (Meșter)</h3>
+            <p><strong>${b.company_name}</strong></p>
+            <p>CUI/CNP: ${b.cui}</p>
+            ${b.address ? `<p>${b.address}</p>` : ''}
+            ${b.iban ? `<p>IBAN: ${b.iban}</p>` : ''}
+            ${b.bank ? `<p>Bancă: ${b.bank}</p>` : ''}
+          </div>
+          <div class="party">
+            <h3>Beneficiar (Client)</h3>
+            <p><strong>${row.clientName}</strong></p>
+            ${row.address ? `<p style="font-size:12px;color:#6B7280">${row.address}</p>` : ''}
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>#</th><th>Data</th><th>Descriere serviciu</th><th>Tip</th><th style="text-align:right">Sumă</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>${fmtDate(row.date.toISOString())}</td>
+              <td>${row.title}</td>
+              <td>${row.typeLabel}</td>
+              <td style="text-align:right;font-weight:600">${row.amount.toLocaleString('ro-RO')} RON</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="total-section">
+          <div style="font-size:13px;color:#6B7280">Total de plată</div>
+          <div class="total-amount">${row.amount.toLocaleString('ro-RO')} RON</div>
+        </div>
+        <div class="footer">Factură generată automat prin HandyConnect · ${now}</div>
+      </body></html>`
+    const win = window.open('', '_blank')
+    win.document.write(html)
+    win.document.close()
+    win.focus()
+    setTimeout(() => win.print(), 600)
   }
 
   return (
@@ -611,9 +793,57 @@ export default function HandymanDashboard() {
             </div>
 
             <div className="lg:col-span-2 bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col">
-              <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-                <h3 className="font-bold text-gray-800">Programul de Azi</h3>
-                <span className="text-xs text-gray-400 bg-gray-50 px-2 py-1 rounded-lg">{new Date().toLocaleDateString('ro-RO', { weekday: 'long', day: '2-digit', month: 'short' })}</span>
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-gray-800">
+                      {scheduleDate === localToday() ? 'Programul de Azi' : 'Program'}
+                    </h3>
+                    {todayItems && todayItems.length > 0 && (
+                      <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">
+                        {todayItems.length} job{todayItems.length !== 1 ? '-uri' : ''}
+                      </span>
+                    )}
+                    {scheduleLoading && <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />}
+                  </div>
+                  {scheduleDate !== localToday() && (
+                    <button
+                      onClick={() => handleScheduleDateChange(localToday())}
+                      className="text-xs text-blue-600 hover:text-blue-800 font-semibold transition"
+                    >
+                      Înapoi la azi
+                    </button>
+                  )}
+                </div>
+                {/* Navigare dată */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const [y, m, d] = scheduleDate.split('-').map(Number)
+                      const prev = new Date(y, m - 1, d - 1)
+                      handleScheduleDateChange(`${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}-${String(prev.getDate()).padStart(2,'0')}`)
+                    }}
+                    className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 transition"
+                  >
+                    <ChevronLeft className="w-4 h-4 text-gray-500" />
+                  </button>
+                  <input
+                    type="date"
+                    value={scheduleDate}
+                    onChange={e => e.target.value && handleScheduleDateChange(e.target.value)}
+                    className="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white cursor-pointer"
+                  />
+                  <button
+                    onClick={() => {
+                      const [y, m, d] = scheduleDate.split('-').map(Number)
+                      const next = new Date(y, m - 1, d + 1)
+                      handleScheduleDateChange(`${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,'0')}-${String(next.getDate()).padStart(2,'0')}`)
+                    }}
+                    className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 transition"
+                  >
+                    <ChevronRight className="w-4 h-4 text-gray-500" />
+                  </button>
+                </div>
               </div>
 
               {todayItems === null ? (
@@ -626,71 +856,179 @@ export default function HandymanDashboard() {
                   <p className="text-sm font-medium text-gray-500">Niciun job programat azi</p>
                   <p className="text-xs text-gray-400 mt-1">Job-urile acceptate cu data de azi vor apărea aici</p>
                 </div>
-              ) : (
-                <div className="divide-y divide-gray-50 overflow-y-auto">
-                  {todayItems.map((item) => {
-                    const isInProgress = item.status === 'in_progress'
-                    const isStarting = startingJobId === item.id
-                    const isTask = item._type === 'task'
-                    const statusCfg = isInProgress
-                      ? { label: 'În Progres', cls: 'bg-purple-100 text-purple-700' }
-                      : item.status === 'accepted'
-                      ? { label: 'Acceptat', cls: 'bg-yellow-100 text-yellow-700' }
-                      : { label: 'Asignat', cls: 'bg-blue-100 text-blue-700' }
+              ) : (() => {
+                // Timeline 07:00–21:00
+                const HOUR_START = 7, HOUR_END = 21
+                const TOTAL_MINS = (HOUR_END - HOUR_START) * 60
+                const toMins = t => { if (!t || t === '—') return null; const [h, m] = t.split(':').map(Number); return h * 60 + m }
+                const isToday = scheduleDate === localToday()
+                const nowMins = new Date().getHours() * 60 + new Date().getMinutes()
+                const nowPct = Math.min(100, Math.max(0, (nowMins - HOUR_START * 60) / TOTAL_MINS * 100))
+                const showNowLine = isToday && nowMins >= HOUR_START * 60 && nowMins <= HOUR_END * 60
 
-                    return (
-                      <div key={item.id} className="p-4 hover:bg-gray-50 transition">
-                        <div className="flex items-start gap-3">
-                          <div className="flex-shrink-0 text-center w-14">
-                            <p className="text-sm font-black text-gray-800">{item.time !== '—' ? item.time.slice(0, 5) : '—'}</p>
-                            <Clock className="w-3 h-3 text-gray-300 mx-auto mt-0.5" />
+                const hours = Array.from({ length: HOUR_END - HOUR_START + 1 }, (_, i) => HOUR_START + i)
+
+                return (
+                  <div className="flex-1 overflow-y-auto p-4">
+                    {/* Timeline grid */}
+                    <div className="relative" style={{ minHeight: `${(HOUR_END - HOUR_START) * 52}px` }}>
+                      {/* Ore pe axa stângă + linii orizontale */}
+                      {hours.map(h => {
+                        const topPct = (h - HOUR_START) / (HOUR_END - HOUR_START) * 100
+                        return (
+                          <div key={h} className="absolute w-full flex items-center gap-2" style={{ top: `${topPct}%` }}>
+                            <span className="text-xs text-gray-300 font-mono w-10 flex-shrink-0 text-right leading-none">{String(h).padStart(2,'0')}:00</span>
+                            <div className="flex-1 border-t border-dashed border-gray-100" />
                           </div>
+                        )
+                      })}
 
-                          <div className={`w-0.5 self-stretch rounded-full flex-shrink-0 ${isInProgress ? 'bg-purple-400' : 'bg-gray-200'}`} />
-
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-2 mb-1">
-                              <h4 className="font-bold text-gray-800 text-sm truncate">{item.title}</h4>
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold flex-shrink-0 ${statusCfg.cls}`}>{statusCfg.label}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-xs text-gray-400 mb-3">
-                              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${isTask ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>
-                                {isTask ? 'Task' : 'Rezervare'}
-                              </span>
-                              <span>{item.client}</span>
-                            </div>
-
-                            <div className="flex gap-2">
-                              {!isInProgress && (
-                                <button
-                                  onClick={() => handleStartJob(item)}
-                                  disabled={isStarting}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-semibold hover:bg-green-700 transition disabled:opacity-60"
-                                >
-                                  {isStarting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3 fill-white" />}
-                                  Începe job
-                                </button>
-                              )}
-                              {isInProgress && (
-                                <span className="flex items-center gap-1 px-3 py-1.5 bg-purple-50 text-purple-700 rounded-lg text-xs font-semibold">
-                                  <CheckCircle2 className="w-3 h-3" /> În desfășurare
-                                </span>
-                              )}
-                              <button
-                                onClick={() => (isTask ? setSelectedTaskId(item.id) : openBookingDetails(item.id))}
-                                className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg text-xs font-medium hover:bg-gray-100 transition"
-                              >
-                                <CalendarClock className="w-3 h-3" />
-                                Reprogramează
-                              </button>
-                            </div>
+                      {/* Linia "acum" */}
+                      {showNowLine && (
+                        <div className="absolute w-full flex items-center gap-2 z-10" style={{ top: `${nowPct}%` }}>
+                          <span className="text-xs font-bold text-red-500 font-mono w-10 flex-shrink-0 text-right leading-none">
+                            {String(new Date().getHours()).padStart(2,'0')}:{String(new Date().getMinutes()).padStart(2,'0')}
+                          </span>
+                          <div className="flex-1 border-t-2 border-red-400 relative">
+                            <div className="absolute -left-1 -top-1 w-2 h-2 bg-red-500 rounded-full" />
                           </div>
                         </div>
+                      )}
+
+                      {/* Blocuri de job-uri — cu algoritm de coloane pentru overlap */}
+                      <div className="absolute left-12 right-0 top-0 bottom-0">
+                        {(() => {
+                          // Calculează coloanele pentru task-uri suprapuse
+                          const itemsWithLayout = todayItems
+                            .filter(item => toMins(item.time))
+                            .map(item => {
+                              const start = toMins(item.time)
+                              const end = start + (item.durationMin || 60)
+                              return { ...item, _start: start, _end: end, _col: 0, _totalCols: 1 }
+                            })
+
+                          // Grupează item-uri care se suprapun
+                          const groups = []
+                          itemsWithLayout.forEach(item => {
+                            const group = groups.find(g => g.some(gi => gi._start < item._end && gi._end > item._start))
+                            if (group) group.push(item)
+                            else groups.push([item])
+                          })
+
+                          // Asignează coloane în fiecare grup
+                          groups.forEach(group => {
+                            const cols = [] // cols[i] = end time of last item in column i
+                            group.forEach(item => {
+                              let placed = false
+                              for (let c = 0; c < cols.length; c++) {
+                                if (cols[c] <= item._start) {
+                                  item._col = c
+                                  cols[c] = item._end
+                                  placed = true
+                                  break
+                                }
+                              }
+                              if (!placed) {
+                                item._col = cols.length
+                                cols.push(item._end)
+                              }
+                              item._totalCols = cols.length
+                            })
+                            // Al doilea pass: totalCols = max col+1 din grup
+                            const maxCols = Math.max(...group.map(i => i._col + 1))
+                            group.forEach(i => { i._totalCols = maxCols })
+                          })
+
+                          return itemsWithLayout.map((item) => {
+                            const start = item._start
+                            const dur = item.durationMin || 60
+                            const topPct = (start - HOUR_START * 60) / TOTAL_MINS * 100
+                            const heightPct = Math.max(dur / TOTAL_MINS * 100, 3.5)
+                            const colW = 100 / item._totalCols
+                            const leftPct = item._col * colW
+                            const gapPx = item._totalCols > 1 ? 2 : 1
+
+                            const isInProgress = item.status === 'in_progress'
+                            const isDelayed = item.status === 'delayed'
+                            const isTask = item._type === 'task'
+                            const isStarting = startingJobId === item.id
+
+                            const blockColor = isInProgress ? 'bg-purple-500 border-purple-600'
+                              : isDelayed ? 'bg-orange-500 border-orange-600'
+                              : item.urgency === 'emergency' ? 'bg-red-500 border-red-600'
+                              : item.urgency === 'urgent' ? 'bg-yellow-500 border-yellow-600'
+                              : isTask ? 'bg-blue-500 border-blue-600'
+                              : 'bg-teal-500 border-teal-600'
+
+                            const endLabel = item.endTime || `${String(Math.floor((start+dur)/60)).padStart(2,'0')}:${String((start+dur)%60).padStart(2,'0')}`
+
+                            return (
+                              <div
+                                key={item.id}
+                                className={`absolute rounded-lg border-l-4 px-2 py-1.5 cursor-pointer hover:brightness-95 transition shadow-sm ${blockColor} text-white overflow-hidden`}
+                                style={{
+                                  top: `${topPct}%`,
+                                  height: `${heightPct}%`,
+                                  minHeight: '44px',
+                                  left: `calc(${leftPct}% + ${gapPx}px)`,
+                                  width: `calc(${colW}% - ${gapPx * 2}px)`,
+                                }}
+                                onClick={() => isTask ? setSelectedTaskId(item.id) : openBookingDetails(item.id)}
+                              >
+                                <div className="flex items-start justify-between gap-1 h-full">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-bold leading-tight truncate">{item.title}</p>
+                                    <p className="text-xs opacity-80 truncate">{item.client}</p>
+                                    <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                                      <span className="text-xs font-mono opacity-90">
+                                        {item.time.slice(0,5)} → {endLabel.slice(0,5)}
+                                      </span>
+                                      {item.durationMin && (
+                                        <span className="text-xs opacity-70">
+                                          ({item.durationMin >= 60
+                                            ? `${Math.floor(item.durationMin/60)}h${item.durationMin%60 > 0 ? ` ${item.durationMin%60}min` : ''}`
+                                            : `${item.durationMin}min`})
+                                        </span>
+                                      )}
+                                    </div>
+                                    {item.location && item._totalCols === 1 && (
+                                      <span className="text-xs opacity-70 truncate block">📍 {item.location}</span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                    <span className="text-xs px-1.5 py-0.5 rounded font-semibold bg-white/20">
+                                      {isInProgress ? 'Progres' : isDelayed ? 'Întârziat' : isTask ? 'Task' : 'Rez.'}
+                                    </span>
+                                    {!isInProgress && !isDelayed && (
+                                      <button
+                                        onClick={e => { e.stopPropagation(); handleStartJob(item) }}
+                                        disabled={isStarting}
+                                        className="text-xs px-1.5 py-0.5 bg-white/20 hover:bg-white/30 rounded font-semibold transition disabled:opacity-60"
+                                      >
+                                        {isStarting ? '...' : '▶'}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })
+                        })()}
                       </div>
-                    )
-                  })}
-                </div>
-              )}
+                    </div>
+
+                    {/* Legendă */}
+                    <div className="flex flex-wrap gap-3 mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400">
+                      <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-500 inline-block" /> Task normal</span>
+                      <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-teal-500 inline-block" /> Rezervare</span>
+                      <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-purple-500 inline-block" /> În progres</span>
+                      <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-orange-500 inline-block" /> Întârziat</span>
+                      <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-red-500 inline-block" /> Urgență critică</span>
+                      <span className="flex items-center gap-1 ml-auto text-red-400 font-medium">— linia roșie = ora curentă</span>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         )}
@@ -952,7 +1290,9 @@ export default function HandymanDashboard() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {earningsRows.map((row, index) => (
-                        <tr key={`${row.type}-${row.id}-${index}`} className="hover:bg-gray-50/70 transition-colors">
+                        <tr key={`${row.type}-${row.id}-${index}`}
+                          onClick={() => setSelectedEarning(row)}
+                          className="hover:bg-blue-50/60 transition-colors cursor-pointer">
                           <td className="px-4 py-3 text-sm text-gray-700">{String(index + 1).padStart(2, '0')}.</td>
                           <td className="px-4 py-3">
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${row.type === 'task' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'}`}>
@@ -1053,7 +1393,7 @@ export default function HandymanDashboard() {
         </div>
       </div>
 
-      <TaskDetailModal taskId={selectedTaskId} onClose={() => setSelectedTaskId(null)} onNegotiate={() => setSelectedTaskId(null)} />
+      <TaskDetailModal taskId={selectedTaskId} userId={profile?.id} onClose={() => setSelectedTaskId(null)} onNegotiate={() => setSelectedTaskId(null)} />
 
       {selectedJob && (
         <JobRequestModal
@@ -1066,6 +1406,68 @@ export default function HandymanDashboard() {
             setReloadKey((k) => k + 1)
           }}
         />
+      )}
+
+      {/* ── Modal detalii câștig ── */}
+      {selectedEarning && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold
+                  ${selectedEarning.type === 'task' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'}`}>
+                  <Briefcase className="w-3 h-3"/>
+                  {selectedEarning.typeLabel}
+                </span>
+                <h3 className="font-bold text-gray-800 text-base">Detalii câștig</h3>
+              </div>
+              <button onClick={() => setSelectedEarning(null)} className="text-gray-400 hover:text-gray-600">
+                <span className="text-xl leading-none">×</span>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-3">
+              <div className="flex justify-between items-center p-3 bg-green-50 rounded-xl">
+                <span className="text-sm text-gray-600">Sumă achitată</span>
+                <span className="text-xl font-black text-green-700">{selectedEarning.amount.toLocaleString('ro-RO')} RON</span>
+              </div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between py-2 border-b border-gray-50">
+                  <span className="text-gray-500">Anunț / Job</span>
+                  <span className="font-medium text-gray-800 text-right max-w-[60%]">{selectedEarning.title}</span>
+                </div>
+                <div className="flex justify-between py-2 border-b border-gray-50">
+                  <span className="text-gray-500">Client</span>
+                  <span className="font-medium text-gray-800">{selectedEarning.clientName}</span>
+                </div>
+                {selectedEarning.address && (
+                  <div className="flex justify-between py-2 border-b border-gray-50">
+                    <span className="text-gray-500">Adresă</span>
+                    <span className="font-medium text-gray-800 text-right max-w-[60%]">{selectedEarning.address}</span>
+                  </div>
+                )}
+                <div className="flex justify-between py-2">
+                  <span className="text-gray-500">Data finalizării</span>
+                  <span className="font-medium text-gray-800">{fmtDate(selectedEarning.date.toISOString())}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex gap-3 p-5 pt-0">
+              <button onClick={() => setSelectedEarning(null)}
+                className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+                Închide
+              </button>
+              <button onClick={() => { generateInvoiceForEarning(selectedEarning); setSelectedEarning(null) }}
+                className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition flex items-center justify-center gap-2">
+                <Calendar className="w-4 h-4"/> Generează factură
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

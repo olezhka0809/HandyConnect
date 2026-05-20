@@ -138,7 +138,7 @@ function MessageTicks({ msg, userId }) {
   return <CheckCheck className="w-3.5 h-3.5 flex-shrink-0 text-white/50" />
 }
 
-export default function MessagingUI({ userId, userRole, initialBookingId, initialTaskId, backPath, onTaskClick, onBookingClick, onDisputeClick }) {
+export default function MessagingUI({ userId, userRole, initialBookingId, initialTaskId, initialWithUserId, backPath, onTaskClick, onBookingClick, onDisputeClick }) {
   const navigate = useNavigate()
   const [conversations, setConversations] = useState([])
   const [activeConvId, setActiveConvId] = useState(null)
@@ -172,7 +172,40 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
   useEffect(() => {
     if (autoSelectedRef.current) return
     if (!conversations.length) return
-    if (!initialBookingId && !initialTaskId) return
+    if (!initialBookingId && !initialTaskId && !initialWithUserId) return
+
+    // Direct conversation via ?with=handymanId
+    if (initialWithUserId) {
+      const existing = conversations.find(c =>
+        c.conversation_type === 'direct' &&
+        ((c.client_id === userId && c.handyman_id === initialWithUserId) ||
+         (c.handyman_id === userId && c.client_id === initialWithUserId))
+      )
+      if (existing) {
+        autoSelectedRef.current = true
+        handleSelectConversation(existing.id)
+      } else {
+        // Create direct conversation — unique index prevents duplicates
+        supabase.from('conversations')
+          .upsert(
+            { client_id: userId, handyman_id: initialWithUserId, conversation_type: 'direct' },
+            { onConflict: 'idx_conversations_direct_unique', ignoreDuplicates: false }
+          )
+          .select().single()
+          .then(({ data }) => {
+            if (data) {
+              autoSelectedRef.current = true
+              setConversations(prev => {
+                if (prev.find(c => c.id === data.id)) return prev
+                return [data, ...prev]
+              })
+              handleSelectConversation(data.id)
+            }
+          })
+      }
+      return
+    }
+
     const target = conversations.find(c =>
       (initialBookingId && c.booking_id === initialBookingId) ||
       (initialTaskId && c.task_id === initialTaskId)
@@ -181,7 +214,7 @@ export default function MessagingUI({ userId, userRole, initialBookingId, initia
       autoSelectedRef.current = true
       handleSelectConversation(target.id)
     }
-  }, [conversations, initialBookingId, initialTaskId])
+  }, [conversations, initialBookingId, initialTaskId, initialWithUserId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })

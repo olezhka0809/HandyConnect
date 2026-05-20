@@ -12,8 +12,9 @@ export default function Messages() {
   const [selectedTaskId, setSelectedTaskId] = useState(null)
   const [selectedBookingId, setSelectedBookingId] = useState(null)
 
-  const initialBookingId = searchParams.get('booking_id') || null
-  const initialTaskId = searchParams.get('task_id') || null
+  const initialBookingId  = searchParams.get('booking_id') || null
+  const initialTaskId     = searchParams.get('task_id')    || null
+  const initialWithUserId = searchParams.get('with')       || null
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -31,6 +32,7 @@ export default function Messages() {
             userRole="client"
             initialBookingId={initialBookingId}
             initialTaskId={initialTaskId}
+            initialWithUserId={initialWithUserId}
             backPath="/dashboard"
             onTaskClick={(taskId) => setSelectedTaskId(taskId)}
             onBookingClick={(bookingId) => setSelectedBookingId(bookingId)}

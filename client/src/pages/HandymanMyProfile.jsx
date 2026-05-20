@@ -507,18 +507,17 @@ export default function HandymanMyProfile() {
               {editMode ? (
                 <div className="space-y-4">
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs font-bold text-gray-600">Descriere bio</label>
-                      <button
-                        onClick={() => setShowBioAiModal(true)}
-                        className="flex items-center gap-1 text-xs font-semibold text-purple-600 hover:text-purple-800 transition"
-                      >
-                        <Sparkles className="w-3.5 h-3.5"/> Generează cu AI
-                      </button>
-                    </div>
+                    <label className="text-xs font-bold text-gray-600 mb-2 block">Descriere bio</label>
                     <textarea value={form.bio} onChange={e=>setForm(p=>({...p,bio:e.target.value}))} rows={5}
                       placeholder="Descrie-te: experiența ta, ce tipuri de lucrări faci, cum lucrezi cu clienții…"
                       className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"/>
+                    <button
+                      onClick={() => setShowBioAiModal(true)}
+                      className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm transition-all
+                        bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 shadow-sm"
+                    >
+                      <Sparkles className="w-4 h-4"/> Generează bio cu AI
+                    </button>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-gray-600 mb-2">Certificări / Licențe</label>

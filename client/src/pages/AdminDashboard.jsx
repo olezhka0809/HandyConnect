@@ -6,8 +6,11 @@ import {
   CheckCircle, XCircle, Clock, AlertTriangle, AlertCircle, Shield,
   TrendingUp, TrendingDown, Wrench, ChevronDown, ChevronUp,
   Search, RefreshCw, Menu, X, Star, FileText, ShieldCheck, ExternalLink,
-  Award, Send, Bell, MessageSquare, DollarSign, RotateCcw, Package
+  Award, Send, Bell, MessageSquare, DollarSign, RotateCcw, Package,
+  Sparkles, Loader2, ThumbsUp, ThumbsDown, Minus
 } from 'lucide-react'
+
+const AI_API_URL = import.meta.env.VITE_API_URL ?? ''
 import MessagingUI from '../components/messages/MessagingUI'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -166,6 +169,7 @@ const NAV = [
   { id: 'disputes',       label: 'Dispute & Conflicte',  icon: TicketCheck },
   { id: 'financials',     label: 'Costuri Dispute',       icon: DollarSign },
   { id: 'support',        label: 'Tichete Suport',        icon: MessageSquare },
+  { id: 'task_lookup',    label: 'Caută Task',            icon: Search },
   { id: 'users',          label: 'Utilizatori',           icon: Users },
 ]
 
@@ -299,6 +303,7 @@ function CertificationsSection() {
           : 'Profilul tău de meșter a fost respins. Completează informațiile lipsă și încearcă din nou.'
       )
       load()
+      loadStats()
     }
     setActionLoading(null)
   }
@@ -548,6 +553,10 @@ function DisputesSection({ initialFilter = 'open' }) {
   const [toast,       setToast]       = useState(null)
   const [completions, setCompletions] = useState({})
   const [showLegend,  setShowLegend]  = useState(false)
+  const [aiAnalysis,  setAiAnalysis]  = useState({})   // keyed by dispute id
+  const [aiLoading,   setAiLoading]   = useState({})   // keyed by dispute id
+  const [aiError,     setAiError]     = useState({})   // keyed by dispute id
+  const [aiExpanded,  setAiExpanded]  = useState({})   // keyed by dispute id
 
   const parseJson = (val) => {
     if (Array.isArray(val)) return val
@@ -570,6 +579,7 @@ function DisputesSection({ initialFilter = 'open' }) {
         handyman_response, handyman_response_at, handyman_evidence,
         admin_decision, admin_decided_at, refund_amount, timeline,
         client_resolution_request, client_refund_estimate, platform_cost, handyman_payout,
+        ai_analysis, ai_analyzed_at,
         rejection_reasons!reason_id(name),
         task:task_id (
           id, title, description, final_price, budget, status,
@@ -680,6 +690,52 @@ function DisputesSection({ initialFilter = 'open' }) {
       showToast(`Eroare: ${err.message}`, 'error')
     } finally {
       setActionKey(null)
+    }
+  }
+
+  async function handleAnalyzeWithAI(d) {
+    const id = d.id
+    setAiLoading(prev => ({ ...prev, [id]: true }))
+    setAiError(prev => ({ ...prev, [id]: null }))
+    try {
+      const fd = new FormData()
+      fd.append('task_title',       d.task?.title ?? '')
+      fd.append('task_description', d.task?.description ?? '')
+      fd.append('dispute_reason',   [d.rejection_reasons?.name, d.details].filter(Boolean).join(': '))
+      fd.append('job_status',       d.task?.status ?? '')
+
+      const allPhotoUrls = [
+        ...parseJson(d.photos),
+        ...parseJson(d.handyman_evidence),
+      ].slice(0, 8)
+
+      for (const url of allPhotoUrls) {
+        try {
+          const resp = await fetch(url)
+          if (resp.ok) {
+            const blob = await resp.blob()
+            fd.append('photos', blob, 'photo.jpg')
+          }
+        } catch {}
+      }
+
+      const res  = await fetch(`${AI_API_URL}/api/ai/analyze-dispute`, { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!json.ok) throw new Error(json.error || 'Eroare AI')
+
+      const analysis = json.data
+      await supabase.from('task_disputes').update({
+        ai_analysis:    analysis,
+        ai_analyzed_at: new Date().toISOString(),
+      }).eq('id', id)
+
+      setAiAnalysis(prev => ({ ...prev, [id]: analysis }))
+      setAiExpanded(prev => ({ ...prev, [id]: true }))
+      setDisputes(prev => prev.map(x => x.id === id ? { ...x, ai_analysis: analysis, ai_analyzed_at: new Date().toISOString() } : x))
+    } catch (err) {
+      setAiError(prev => ({ ...prev, [id]: err.message || 'Analiza a eșuat.' }))
+    } finally {
+      setAiLoading(prev => ({ ...prev, [id]: false }))
     }
   }
 
@@ -1096,6 +1152,144 @@ function DisputesSection({ initialFilter = 'open' }) {
                           </div>
                         </div>
                       )}
+
+                      {/* ── AI ANALYSIS PANEL ── */}
+                      {(() => {
+                        const existingAnalysis = aiAnalysis[d.id] || (d.ai_analysis && typeof d.ai_analysis === 'object' ? d.ai_analysis : null)
+                        const isLoading  = !!aiLoading[d.id]
+                        const errMsg     = aiError[d.id]
+                        const expanded   = aiExpanded[d.id] ?? !!existingAnalysis
+                        const rec        = existingAnalysis?.recommendation
+                        const recCfg     = rec === 'handyman'
+                          ? { label: 'Meșterul are dreptate', cls: 'bg-blue-100 text-blue-700 border-blue-200', Icon: ThumbsUp }
+                          : rec === 'client'
+                          ? { label: 'Clientul are dreptate', cls: 'bg-rose-100 text-rose-700 border-rose-200', Icon: ThumbsDown }
+                          : { label: 'Situație neutră', cls: 'bg-gray-100 text-gray-600 border-gray-200', Icon: Minus }
+
+                        return (
+                          <div className="border border-purple-200 rounded-xl overflow-hidden">
+                            {/* Header */}
+                            <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-purple-50 to-blue-50 border-b border-purple-100">
+                              <div className="flex items-center gap-2">
+                                <Sparkles className="w-4 h-4 text-purple-600" />
+                                <p className="text-sm font-bold text-purple-800">Analiză AI</p>
+                                {d.ai_analyzed_at && (
+                                  <span className="text-xs text-purple-400">· {new Date(d.ai_analyzed_at).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                )}
+                              </div>
+                              {existingAnalysis && (
+                                <button onClick={() => setAiExpanded(prev => ({ ...prev, [d.id]: !expanded }))}
+                                  className="text-xs text-purple-600 hover:text-purple-800 font-medium transition">
+                                  {expanded ? 'Ascunde ▲' : 'Arată ▼'}
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Body */}
+                            <div className="p-4 space-y-3">
+                              {/* Existing analysis */}
+                              {existingAnalysis && expanded && (
+                                <>
+                                  {/* Recommendation + Confidence */}
+                                  <div className="flex items-center gap-3 flex-wrap">
+                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-bold border ${recCfg.cls}`}>
+                                      <recCfg.Icon className="w-4 h-4" /> {recCfg.label}
+                                    </span>
+                                    {existingAnalysis.confidence != null && (
+                                      <div className="flex items-center gap-2">
+                                        <div className="w-24 h-2 rounded-full bg-gray-200 overflow-hidden">
+                                          <div
+                                            className={`h-full rounded-full transition-all ${existingAnalysis.confidence >= 70 ? 'bg-green-500' : existingAnalysis.confidence >= 40 ? 'bg-yellow-400' : 'bg-red-400'}`}
+                                            style={{ width: `${existingAnalysis.confidence}%` }}
+                                          />
+                                        </div>
+                                        <span className="text-xs text-gray-500 font-medium">{existingAnalysis.confidence}% încredere</span>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Reasoning */}
+                                  {existingAnalysis.reasoning && (
+                                    <div className="bg-purple-50 border border-purple-100 rounded-lg p-3">
+                                      <p className="text-xs font-bold text-purple-600 uppercase tracking-wide mb-1">Raționament AI</p>
+                                      <p className="text-sm text-gray-700 leading-relaxed">{existingAnalysis.reasoning}</p>
+                                    </div>
+                                  )}
+
+                                  {/* Pro/Contra grid */}
+                                  {(existingAnalysis.client_points?.length > 0 || existingAnalysis.handyman_points?.length > 0) && (
+                                    <div className="grid sm:grid-cols-2 gap-3">
+                                      {existingAnalysis.client_points?.length > 0 && (
+                                        <div className="bg-rose-50 border border-rose-100 rounded-lg p-3">
+                                          <p className="text-xs font-bold text-rose-600 uppercase tracking-wide mb-2">Puncte valide — Client</p>
+                                          <ul className="space-y-1">
+                                            {existingAnalysis.client_points.map((pt, i) => (
+                                              <li key={i} className="flex items-start gap-1.5 text-xs text-rose-800">
+                                                <span className="text-rose-400 flex-shrink-0 mt-0.5">•</span>{pt}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+                                      {existingAnalysis.handyman_points?.length > 0 && (
+                                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                                          <p className="text-xs font-bold text-blue-600 uppercase tracking-wide mb-2">Puncte valide — Meșter</p>
+                                          <ul className="space-y-1">
+                                            {existingAnalysis.handyman_points.map((pt, i) => (
+                                              <li key={i} className="flex items-start gap-1.5 text-xs text-blue-800">
+                                                <span className="text-blue-400 flex-shrink-0 mt-0.5">•</span>{pt}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Suggested resolution */}
+                                  {existingAnalysis.suggested_resolution && (
+                                    <div className="flex items-start gap-2 bg-green-50 border border-green-200 rounded-lg p-3">
+                                      <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                                      <div>
+                                        <p className="text-xs font-bold text-green-700 uppercase tracking-wide mb-0.5">Rezoluție sugerată</p>
+                                        <p className="text-sm text-green-800">{existingAnalysis.suggested_resolution}</p>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Disclaimer */}
+                                  <p className="text-xs text-gray-400 italic px-1">
+                                    ⚠️ {existingAnalysis.disclaimer ?? 'Aceasta este o recomandare AI. Decizia finală aparține administratorului.'}
+                                  </p>
+                                </>
+                              )}
+
+                              {/* Error */}
+                              {errMsg && (
+                                <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />{errMsg}
+                                </div>
+                              )}
+
+                              {/* Analyze button */}
+                              <button
+                                onClick={() => handleAnalyzeWithAI(d)}
+                                disabled={isLoading}
+                                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm transition-all
+                                  bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700
+                                  disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+                              >
+                                {isLoading
+                                  ? <><Loader2 className="w-4 h-4 animate-spin"/> Analizez disputa…</>
+                                  : existingAnalysis
+                                    ? <><Sparkles className="w-4 h-4"/> Regenerează analiza AI</>
+                                    : <><Sparkles className="w-4 h-4"/> Analizează disputa cu AI</>
+                                }
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })()}
 
                       {/* Admin decision panel */}
                       {!d.admin_decision && (ADMIN_NEEDS_DECISION.includes(d.status) || d.status === 'open') && d.status !== 'admin_proposed_rework' && (
@@ -2384,7 +2578,11 @@ function SupportTicketsSection() {
     setLoading(true)
     const { data } = await supabase
       .from('support_tickets')
-      .select('*, profiles!support_tickets_client_id_fkey(first_name, last_name, avatar_url)')
+      .select(`
+        *,
+        client:client_id(first_name, last_name, avatar_url),
+        handyman:handyman_id(first_name, last_name, avatar_url)
+      `)
       .order('created_at', { ascending: false })
     setTickets(data ?? [])
     setLoading(false)
@@ -2392,17 +2590,30 @@ function SupportTicketsSection() {
 
   async function saveResponse(t) {
     setSaving(t.id)
-    const resp = response[t.id] ?? ''
+    const resp   = response[t.id] ?? ''
     const status = newStatus[t.id] ?? t.status
+    const resolvedAt = status === 'resolved' ? new Date().toISOString() : null
     const { error } = await supabase
       .from('support_tickets')
-      .update({ admin_response: resp || null, status })
+      .update({ admin_response: resp || null, status, ...(resolvedAt ? { resolved_at: resolvedAt } : {}) })
       .eq('id', t.id)
-    setSaving(null)
     if (!error) {
+      // Notifică utilizatorul (client sau meșter)
+      const recipientId = t.submitted_by === 'handyman' ? t.handyman_id : t.client_id
+      const redirectUrl = t.submitted_by === 'handyman' ? '/handyman/support?tab=tickets' : '/issues?tab=tickets'
+      if (recipientId && resp) {
+        await supabase.from('notifications').insert({
+          user_id: recipientId,
+          type:    'support_ticket_response',
+          title:   'Răspuns la tichetul tău de suport',
+          body:    `Adminul a răspuns la „${t.title}": ${resp.slice(0, 80)}${resp.length > 80 ? '…' : ''}`,
+          data:    { redirect: redirectUrl },
+        })
+      }
       setTickets(prev => prev.map(x => x.id === t.id ? { ...x, admin_response: resp || null, status } : x))
       setOpenId(null)
     }
+    setSaving(null)
   }
 
   const filtered = tickets.filter(t => {
@@ -2410,7 +2621,8 @@ function SupportTicketsSection() {
     if (filterSev    !== 'all' && t.severity !== filterSev)  return false
     if (search) {
       const q = search.toLowerCase()
-      const name = `${t.profiles?.first_name ?? ''} ${t.profiles?.last_name ?? ''}`.toLowerCase()
+      const person = t.submitted_by === 'handyman' ? t.handyman : t.client
+      const name = `${person?.first_name ?? ''} ${person?.last_name ?? ''}`.toLowerCase()
       if (!t.title.toLowerCase().includes(q) && !name.includes(q) && !t.category.toLowerCase().includes(q)) return false
     }
     return true
@@ -2477,7 +2689,9 @@ function SupportTicketsSection() {
       ) : (
         <div className="space-y-3">
           {filtered.map(t => {
-            const clientName = `${t.profiles?.first_name ?? ''} ${t.profiles?.last_name ?? ''}`.trim() || 'Client necunoscut'
+            const isHandyman = t.submitted_by === 'handyman'
+            const person = isHandyman ? t.handyman : t.client
+            const personName = `${person?.first_name ?? ''} ${person?.last_name ?? ''}`.trim() || (isHandyman ? 'Meșter necunoscut' : 'Client necunoscut')
             const isOpen = openId === t.id
             return (
               <div key={t.id} className={`bg-white rounded-xl border overflow-hidden transition-all ${t.severity === 'critical' && t.status === 'open' ? 'border-red-200' : 'border-gray-100'}`}>
@@ -2500,9 +2714,12 @@ function SupportTicketsSection() {
                       <span className="font-semibold text-gray-800 text-sm">{t.title}</span>
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[t.status]}`}>{STATUS_LABELS[t.status]}</span>
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${SEVERITY_COLORS[t.severity]}`}>{SEVERITY_LABELS[t.severity]}</span>
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isHandyman ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                        {isHandyman ? '🔧 Meșter' : '👤 Client'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-3 text-xs text-gray-400">
-                      <span className="font-medium text-gray-600">{clientName}</span>
+                      <span className="font-medium text-gray-600">{personName}</span>
                       <span>{t.category}</span>
                       <span>{fmtDate(t.created_at)}</span>
                     </div>
@@ -2514,7 +2731,7 @@ function SupportTicketsSection() {
                 {isOpen && (
                   <div className="px-4 pb-5 border-t border-gray-100 pt-4 space-y-4">
                     <div>
-                      <p className="text-xs font-bold text-gray-500 mb-1">Descriere client</p>
+                      <p className="text-xs font-bold text-gray-500 mb-1">Descriere {isHandyman ? 'meșter' : 'client'}</p>
                       <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-gray-50 rounded-lg p-3">{t.description}</p>
                     </div>
                     {(t.booking_id || t.task_id) && (
@@ -2566,6 +2783,329 @@ function SupportTicketsSection() {
   )
 }
 
+// ─── TaskLookupSection ────────────────────────────────────────────────────────
+
+function TaskLookupSection() {
+  const [query,   setQuery]   = useState('')
+  const [loading, setLoading] = useState(false)
+  const [task,    setTask]    = useState(null)
+  const [error,   setError]   = useState(null)
+  const [offers,  setOffers]  = useState([])
+  const [dispute, setDispute] = useState(null)
+  const [review,  setReview]  = useState(null)
+  const [completion, setCompletion] = useState(null)
+
+  const STATUS_LABELS = {
+    pending: 'Nou', open: 'Nou', assigned: 'Atribuit', accepted: 'Atribuit',
+    in_progress: 'În progres', delayed: 'Întârziat', completed: 'Finalizat',
+    client_approved: 'Aprobat', cancelled: 'Anulat', disputed: 'Disputat',
+    rework_in_progress: 'Relucrare', rework_completed: 'Relucrare Finalizată',
+  }
+  const STATUS_COLORS = {
+    pending: 'bg-gray-100 text-gray-600', open: 'bg-gray-100 text-gray-600',
+    assigned: 'bg-blue-100 text-blue-700', accepted: 'bg-blue-100 text-blue-700',
+    in_progress: 'bg-purple-100 text-purple-700', delayed: 'bg-orange-100 text-orange-700',
+    completed: 'bg-green-100 text-green-700', client_approved: 'bg-green-100 text-green-700',
+    cancelled: 'bg-red-100 text-red-700', disputed: 'bg-red-100 text-red-700',
+    rework_in_progress: 'bg-amber-100 text-amber-700', rework_completed: 'bg-teal-100 text-teal-700',
+  }
+
+  async function handleSearch(e) {
+    e?.preventDefault()
+    const q = query.trim()
+    if (!q) return
+    setLoading(true)
+    setError(null)
+    setTask(null)
+    setOffers([])
+    setDispute(null)
+    setReview(null)
+    setCompletion(null)
+
+    try {
+      const { data: rows, error: err } = await supabase.rpc('admin_search_task', { p_query: q })
+      if (err) throw err
+      const raw = rows?.[0]
+      if (!raw) { setError('Niciun task găsit cu această căutare.'); setLoading(false); return }
+
+      // Reshape flat RPC result into nested structure expected by the UI
+      const data = {
+        ...raw,
+        category: raw.category_name ? { name: raw.category_name } : null,
+        client: {
+          first_name: raw.client_first_name,
+          last_name: raw.client_last_name,
+          email: raw.client_email,
+          phone: raw.client_phone,
+        },
+        handyman: raw.handyman_id ? {
+          first_name: raw.handyman_first_name,
+          last_name: raw.handyman_last_name,
+          email: raw.handyman_email,
+        } : null,
+      }
+      setTask(data)
+
+      // Oferte
+      const { data: offersData } = await supabase
+        .from('task_offers')
+        .select('*, handyman:handyman_id(first_name, last_name)')
+        .eq('task_id', data.id)
+        .order('created_at', { ascending: false })
+      setOffers(offersData ?? [])
+
+      // Dispută
+      const { data: disputeData } = await supabase
+        .from('task_disputes')
+        .select('*')
+        .eq('task_id', data.id)
+        .maybeSingle()
+      setDispute(disputeData ?? null)
+
+      // Recenzie
+      const { data: reviewData } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('task_id', data.id)
+        .maybeSingle()
+      setReview(reviewData ?? null)
+
+      // Finalizare
+      const { data: compData } = await supabase
+        .from('job_completions')
+        .select('*')
+        .eq('job_id', data.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      setCompletion(compData ?? null)
+    } catch (e) {
+      setError('Eroare la căutare: ' + (e.message || ''))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-gray-800">Caută Task</h2>
+        <p className="text-sm text-gray-500 mt-1">Introdu ID-ul sau titlul task-ului pentru a vedea istoricul complet.</p>
+      </div>
+
+      {/* Search bar */}
+      <form onSubmit={handleSearch} className="flex gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Ex: #3F4A2B1 · UUID complet · sau cuvinte din titlu…"
+            className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={loading || !query.trim()}
+          className="px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition disabled:opacity-50 flex items-center gap-2"
+        >
+          {loading ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Search className="w-4 h-4" />}
+          Caută
+        </button>
+      </form>
+
+      {error && (
+        <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />{error}
+        </div>
+      )}
+
+      {task && (
+        <div className="space-y-4">
+          {/* ── Task header ── */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${STATUS_COLORS[task.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                    {STATUS_LABELS[task.status] ?? task.status}
+                  </span>
+                  {task.category?.name && (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600">{task.category.name}</span>
+                  )}
+                  {task.urgency && task.urgency !== 'normal' && (
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${task.urgency === 'emergency' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                      {task.urgency === 'emergency' ? '🔴 Urgent' : '🟡 Mediu'}
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-lg font-bold text-gray-800">{task.title}</h3>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-sm font-mono font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                    #{task.id.replace(/-/g,'').slice(0,7).toUpperCase()}
+                  </span>
+                  <span className="text-[10px] text-gray-300 font-mono">{task.id}</span>
+                </div>
+              </div>
+              {task.budget && (
+                <div className="text-right flex-shrink-0">
+                  <p className="text-xs text-gray-400">Buget client</p>
+                  <p className="text-xl font-bold text-blue-600">{Number(task.budget).toLocaleString('ro-RO')} RON</p>
+                  {task.final_price && <p className="text-xs text-green-600 font-medium">Preț final: {Number(task.final_price).toLocaleString('ro-RO')} RON</p>}
+                </div>
+              )}
+            </div>
+
+            {task.description && (
+              <div className="bg-gray-50 rounded-lg p-3 mb-4">
+                <p className="text-xs text-gray-400 mb-1 font-medium uppercase tracking-wide">Descriere</p>
+                <p className="text-sm text-gray-700 leading-relaxed">{task.description}</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div><p className="text-xs text-gray-400">Locație</p><p className="font-medium text-gray-700">{[task.address_city, task.address_county].filter(Boolean).join(', ') || '—'}</p></div>
+              <div><p className="text-xs text-gray-400">Postat</p><p className="font-medium text-gray-700">{fmt(task.created_at)}</p></div>
+              <div><p className="text-xs text-gray-400">Programat</p><p className="font-medium text-gray-700">{task.scheduled_date ? `${task.scheduled_date}${task.scheduled_time ? ' ' + task.scheduled_time : ''}` : '—'}</p></div>
+              <div><p className="text-xs text-gray-400">Finalizat</p><p className="font-medium text-gray-700">{fmt(task.completed_at)}</p></div>
+            </div>
+          </div>
+
+          {/* ── Client + Handyman ── */}
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Client</p>
+              {task.client ? (
+                <>
+                  <p className="font-semibold text-gray-800">{task.client.first_name} {task.client.last_name}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{task.client.email}</p>
+                  {task.client.phone && <p className="text-xs text-gray-500">{task.client.phone}</p>}
+                </>
+              ) : <p className="text-sm text-gray-400">Neatribuit</p>}
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Meșter alocat</p>
+              {task.handyman ? (
+                <>
+                  <p className="font-semibold text-gray-800">{task.handyman.first_name} {task.handyman.last_name}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{task.handyman.email}</p>
+                </>
+              ) : <p className="text-sm text-gray-400">Neatribuit</p>}
+            </div>
+          </div>
+
+          {/* ── Oferte ── */}
+          {offers.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Oferte primite ({offers.length})</p>
+              <div className="space-y-2">
+                {offers.map(o => (
+                  <div key={o.id} className="flex items-center justify-between text-sm py-1.5 border-b border-gray-50 last:border-0">
+                    <div>
+                      <span className="font-medium text-gray-700">{o.handyman?.first_name} {o.handyman?.last_name}</span>
+                      {o.message && <span className="text-xs text-gray-400 ml-2">„{o.message.slice(0, 40)}…"</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-blue-600">{Number(o.proposed_price).toLocaleString('ro-RO')} RON</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${o.status === 'accepted' ? 'bg-green-100 text-green-700' : o.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {o.status === 'accepted' ? 'Acceptată' : o.status === 'rejected' ? 'Refuzată' : 'În așteptare'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Finalizare + Recenzie ── */}
+          <div className="grid md:grid-cols-2 gap-4">
+            {completion && (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Finalizare</p>
+                <p className="text-xs text-gray-500 mb-2">{fmt(completion.created_at)}</p>
+                {completion.completion_description && (
+                  <p className="text-sm text-gray-700 mb-3">{completion.completion_description}</p>
+                )}
+                {Array.isArray(completion.completion_photos) && completion.completion_photos.length > 0 && (
+                  <div className="flex gap-2 flex-wrap">
+                    {completion.completion_photos.map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                        <img src={url} alt="" className="w-14 h-14 rounded-lg object-cover border border-gray-200 hover:opacity-80 transition" />
+                      </a>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-2 flex items-center gap-2">
+                  {completion.client_accepted === true && <span className="text-xs font-semibold text-green-600">✓ Aprobat de client</span>}
+                  {completion.client_accepted === false && <span className="text-xs font-semibold text-red-600">✗ Respins de client</span>}
+                  {completion.client_rating && (
+                    <span className="text-xs text-yellow-500 font-bold">{'★'.repeat(Math.round(completion.client_rating))} {completion.client_rating}</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {review && (
+              <div className="bg-white rounded-xl border border-gray-200 p-4">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Recenzie client</p>
+                <div className="flex items-center gap-1 mb-2">
+                  {'★★★★★'.split('').map((_, i) => (
+                    <span key={i} className={`text-lg ${i < review.rating ? 'text-yellow-400' : 'text-gray-200'}`}>★</span>
+                  ))}
+                  <span className="font-bold text-gray-700 ml-1">{review.rating}.0</span>
+                </div>
+                {review.description && <p className="text-sm text-gray-600 italic">„{review.description}"</p>}
+                <p className="text-xs text-gray-400 mt-1">{fmt(review.created_at)}</p>
+              </div>
+            )}
+          </div>
+
+          {/* ── Dispută ── */}
+          {dispute && (
+            <div className="bg-white rounded-xl border border-red-200 p-4">
+              <p className="text-xs font-bold text-red-500 uppercase tracking-wide mb-3">⚠️ Dispută deschisă</p>
+              <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+                <div><p className="text-xs text-gray-400">Status</p><p className="font-semibold text-gray-700">{dispute.status}</p></div>
+                <div><p className="text-xs text-gray-400">Deschisă la</p><p className="font-semibold text-gray-700">{fmt(dispute.created_at)}</p></div>
+              </div>
+              {dispute.details && (
+                <div className="bg-red-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-400 mb-1">Detalii client</p>
+                  <p className="text-sm text-gray-700">{dispute.details}</p>
+                </div>
+              )}
+              {dispute.admin_decision && (
+                <div className="bg-green-50 rounded-lg p-3 mt-2">
+                  <p className="text-xs text-gray-400 mb-1">Decizie admin</p>
+                  <p className="text-sm text-gray-700">{typeof dispute.admin_decision === 'string' ? dispute.admin_decision : JSON.stringify(dispute.admin_decision)}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Adresă completă ── */}
+          {task.service_address && (
+            <div className="bg-white rounded-xl border border-gray-200 p-4">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1">Adresă completă</p>
+              <p className="text-sm text-gray-700">{task.service_address}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!task && !loading && !error && (
+        <div className="text-center py-16 bg-white rounded-xl border border-gray-100">
+          <Search className="w-12 h-12 text-gray-200 mx-auto mb-3" />
+          <p className="text-gray-500 font-medium">Caută un task după ID sau titlu</p>
+          <p className="text-sm text-gray-400 mt-1">Poți introduce UUID-ul complet sau câteva cuvinte din titlu</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main AdminDashboard ───────────────────────────────────────────────────────
 
 export default function AdminDashboard() {
@@ -2598,6 +3138,30 @@ export default function AdminDashboard() {
   const clearAdminNotifs = async () => {
     setAdminNotifs([])
     if (adminId) await supabase.from('notifications').delete().eq('user_id', adminId)
+  }
+
+  const loadStats = async () => {
+    const { data: rolesData } = await supabase.from('roles').select('id, name')
+    const clientRoleId  = rolesData?.find(r => r.name === 'client')?.id
+    const handymanRoleId = rolesData?.find(r => r.name === 'handyman')?.id
+    const [clientsRes, handymenRes, pendingRes, disputesRes, verifsRes, skillsRes, recentRes] = await Promise.all([
+      clientRoleId  ? supabase.from('user_roles').select('*', { count: 'exact', head: true }).eq('role_id', clientRoleId)  : Promise.resolve({ count: 0 }),
+      handymanRoleId ? supabase.from('user_roles').select('*', { count: 'exact', head: true }).eq('role_id', handymanRoleId) : Promise.resolve({ count: 0 }),
+      supabase.from('handyman_profiles').select('*', { count: 'exact', head: true }).eq('is_verified', false).neq('status', 'rejected'),
+      supabase.from('task_disputes').select('*', { count: 'exact', head: true }).eq('status', 'open'),
+      supabase.from('verifications').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('user_skills').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+      supabase.from('handyman_profiles').select('user_id, profiles!inner(first_name, last_name)').eq('is_verified', false).neq('status', 'rejected').limit(5),
+    ])
+    setStats({
+      clients:       clientsRes.count  ?? 0,
+      handymen:      handymenRes.count ?? 0,
+      pending:       pendingRes.count  ?? 0,
+      openDisputes:  disputesRes.count ?? 0,
+      pendingVerifs: verifsRes.count   ?? 0,
+      pendingSkills: skillsRes.count   ?? 0,
+      recentPending: recentRes.data    ?? [],
+    })
   }
 
   useEffect(() => {
@@ -2634,40 +3198,7 @@ export default function AdminDashboard() {
           .subscribe()
       }
 
-      // Get role IDs
-      const { data: rolesData } = await supabase
-        .from('roles')
-        .select('id, name')
-      const clientRoleId = rolesData?.find(r => r.name === 'client')?.id
-      const handymanRoleId = rolesData?.find(r => r.name === 'handyman')?.id
-
-      const [clientsRes, handymenRes, pendingRes, disputesRes, verifsRes, skillsRes, recentRes] = await Promise.all([
-        clientRoleId
-          ? supabase.from('user_roles').select('*', { count: 'exact', head: true }).eq('role_id', clientRoleId)
-          : Promise.resolve({ count: 0 }),
-        handymanRoleId
-          ? supabase.from('user_roles').select('*', { count: 'exact', head: true }).eq('role_id', handymanRoleId)
-          : Promise.resolve({ count: 0 }),
-        supabase.from('handyman_profiles').select('*', { count: 'exact', head: true }).eq('is_verified', false).neq('status', 'rejected'),
-        supabase.from('task_disputes').select('*', { count: 'exact', head: true }).eq('status', 'open'),
-        supabase.from('verifications').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-        supabase.from('user_skills').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-        supabase.from('handyman_profiles')
-          .select('user_id, profiles!inner(first_name, last_name)')
-          .eq('is_verified', false)
-          .neq('status', 'rejected')
-          .limit(5),
-      ])
-
-      setStats({
-        clients:       clientsRes.count ?? 0,
-        handymen:      handymenRes.count ?? 0,
-        pending:       pendingRes.count ?? 0,
-        openDisputes:  disputesRes.count ?? 0,
-        pendingVerifs: verifsRes.count ?? 0,
-        pendingSkills: skillsRes.count ?? 0,
-        recentPending: recentRes.data ?? [],
-      })
+      await loadStats()
     }
     init()
     return () => { if (channel) supabase.removeChannel(channel) }
@@ -2686,6 +3217,7 @@ export default function AdminDashboard() {
     if (activeSection === 'disputes')       return <DisputesSection key={disputeInitFilter} initialFilter={disputeInitFilter} />
     if (activeSection === 'financials')     return <DisputeFinancialsSection />
     if (activeSection === 'support')        return <SupportTicketsSection />
+    if (activeSection === 'task_lookup')    return <TaskLookupSection />
     if (activeSection === 'users')          return <UsersSection />
     if (activeSection === 'messages' && adminId) return (
       <div className="h-[calc(100vh-8rem)]">

@@ -148,3 +148,22 @@ client/.agents/
 client/skills-lock.json
 skills-lock.json
 .mcp.json
+README_AI.md
+Test_AI.txt
+
+# IDE configuration
+.vscode/
+
+# Internal documentation (not for public repo)
+README_2FA.md
+README_EMAIL.md
+README_LOCATION.md
+README_LOCATION_IMPL.md
+HANDYCONNECT_SCHEDULING_SPEC.md
+
+# Supabase email templates (generated)
+supabase_email_confirm.html
+supabase_email_reset.html
+
+# Pending migrations (apply manually)
+supabase_scheduling_migration.sql

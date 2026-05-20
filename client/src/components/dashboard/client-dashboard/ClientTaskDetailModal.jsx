@@ -9,8 +9,27 @@ import {
   User, Send, RotateCcw, BadgeCheck, ChevronDown, CalendarClock,
   Layers, Square, Wrench, Paintbrush, Hammer, Sparkles,
   Flower2, Sofa, CircuitBoard, Lightbulb, Building2,
-  MoreHorizontal, Droplets, Plug, Heart, ZoomIn, ZoomOut
+  MoreHorizontal, Droplets, Plug, Heart, ZoomIn, ZoomOut, Copy
 } from 'lucide-react'
+
+function TaskRefBadge({ id }) {
+  const [copied, setCopied] = useState(false)
+  if (!id) return null
+  const ref = '#' + id.replace(/-/g, '').slice(0, 7).toUpperCase()
+  const copy = (e) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(ref).catch(() => {})
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button onClick={copy} title="Copiază referința task"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 hover:bg-blue-50 hover:border-blue-200 border border-gray-200 text-gray-500 hover:text-blue-600 rounded-lg text-xs font-mono font-bold transition-all">
+      {copied ? <CheckCircle className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      {copied ? <span className="text-green-600">Copiat!</span> : ref}
+    </button>
+  )
+}
 
 function slugify(first, last) {
   return `${first}-${last}`.toLowerCase()
@@ -2578,6 +2597,7 @@ export default function ClientTaskDetailModal({ taskId, onClose, onUpdated }) {
   const [deleting,   setDeleting]   = useState(false)
   const [showRescheduleModal, setShowRescheduleModal] = useState(false)
   const [rescheduleSaving, setRescheduleSaving] = useState(false)
+  const [acceptingDelay, setAcceptingDelay] = useState(false)
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [showArchiveModal, setShowArchiveModal] = useState(false)
   const [archiving, setArchiving] = useState(false)
@@ -2912,6 +2932,31 @@ export default function ClientTaskDetailModal({ taskId, onClose, onUpdated }) {
     }
   }
 
+  // ── accept reported delay (client decision) ───────────────────────────────
+  const handleAcceptDelay = async () => {
+    if (!task?.id || !task.handyman_id) return
+    setAcceptingDelay(true)
+    try {
+      await supabase.from('tasks').update({ delay_accepted_by_client: true, updated_at: new Date().toISOString() }).eq('id', task.id)
+      await supabase.from('notifications').insert({
+        user_id: task.handyman_id,
+        type: 'delay_accepted_by_client',
+        title: 'Clientul a acceptat întârzierea',
+        body: `Clientul a acceptat întârzierea pentru „${task.title}". Continuă cu lucrarea.`,
+        data: { task_id: task.id, redirect: '/handyman/jobs' },
+      })
+      // Refresh task
+      const { data: newTask } = await supabase.from('tasks').select('*, categories(id, name, icon)').eq('id', task.id).maybeSingle()
+      if (newTask) setTask(newTask)
+      setSaveMsg('Decizia a fost înregistrată.')
+      if (onUpdated) onUpdated()
+    } catch (e) {
+      setSaveMsg(`Eroare: ${e.message ?? ''}`)
+    } finally {
+      setAcceptingDelay(false)
+    }
+  }
+
   // ── accept offer ───────────────────────────────────────────────────────────
   const handleAcceptOffer = async (offer) => {
     if (isReadOnly) {
@@ -3014,6 +3059,7 @@ export default function ClientTaskDetailModal({ taskId, onClose, onUpdated }) {
                 {loading ? 'Se încarcă…' : (task?.title ?? '—')}
               </h3>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
+                {!loading && task?.id && <TaskRefBadge id={task.id} />}
                 {!loading && category && (
                   <div className="flex items-center gap-1 text-xs text-blue-600 font-medium">
                     <CategoryIcon iconName={category.icon} className="w-3.5 h-3.5" />
@@ -3214,14 +3260,35 @@ export default function ClientTaskDetailModal({ taskId, onClose, onUpdated }) {
                 )}
 
                 {isDelayed && (
-                  <div className="flex items-start gap-3 p-3.5 bg-orange-50 border border-orange-200 rounded-xl">
-                    <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0" />
-                    <div>
-                      <p className="text-sm font-semibold text-orange-800">Task marcat ca întârziat</p>
-                      <p className="text-xs text-orange-700 mt-0.5">
-                        {task.delay_reason || 'Handymanul a anunțat că ajunge cu întârziere.'}
-                      </p>
+                  <div className="p-3.5 bg-orange-50 border border-orange-200 rounded-xl space-y-2.5">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-orange-800">Task marcat ca întârziat</p>
+                        <p className="text-xs text-orange-700 mt-0.5">Meșterul a anunțat că va ajunge cu întârziere.</p>
+                      </div>
                     </div>
+                    {task.delay_reason && (
+                      <div className="border-t border-orange-200 pt-2">
+                        <p className="text-[11px] font-bold text-orange-700 uppercase tracking-wide">Motivul meșterului:</p>
+                        <p className="text-xs text-orange-800 mt-0.5">{task.delay_reason}</p>
+                      </div>
+                    )}
+                    {task.delay_accepted_by_client ? (
+                      <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-xs text-green-700">
+                        <CheckCircle className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+                        Decizie înregistrată — meșterul a fost notificat.
+                      </div>
+                    ) : (
+                      <button
+                        onClick={handleAcceptDelay}
+                        disabled={acceptingDelay}
+                        className="w-full flex items-center justify-center gap-2 py-2.5 bg-orange-600 text-white rounded-xl text-sm font-medium hover:bg-orange-700 transition disabled:opacity-50"
+                      >
+                        {acceptingDelay ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                        Acceptă întârzierea
+                      </button>
+                    )}
                   </div>
                 )}
 

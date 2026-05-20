@@ -6,8 +6,22 @@ import {
   ChevronLeft, ChevronRight, CheckCircle, Loader2,
   AlertTriangle, Zap, Shield, Wrench, Star, CreditCard, XCircle,
   Banknote, MessageSquare, AlertCircle, ExternalLink,
-  CalendarClock, Send
+  CalendarClock, Send, Copy
 } from 'lucide-react'
+
+function RefBadge({ id, prefix = '' }) {
+  const [copied, setCopied] = useState(false)
+  if (!id) return null
+  const ref = prefix + id.replace(/-/g, '').slice(0, 7).toUpperCase()
+  const copy = (e) => { e.stopPropagation(); navigator.clipboard.writeText(ref).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500) }
+  return (
+    <button onClick={copy} title="Copiază referința"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 hover:bg-blue-50 hover:border-blue-200 border border-gray-200 text-gray-500 hover:text-blue-600 rounded-lg text-xs font-mono font-bold transition-all mt-1">
+      {copied ? <CheckCircle className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      {copied ? <span className="text-green-600">Copiat!</span> : `#${ref}`}
+    </button>
+  )
+}
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -58,6 +72,7 @@ const STATUS_LABEL = {
   confirmed:  'Confirmat',
   assigned:   'Alocat',
   in_progress:'În lucru',
+  delayed:    'Întârziat',
   completed:  'Finalizat',
   client_approved: 'Acceptat de client',
   client_rejected: 'Respins de client',
@@ -68,6 +83,7 @@ const STATUS_COLOR = {
   confirmed:  'bg-blue-100 text-blue-700',
   assigned:   'bg-blue-100 text-blue-700',
   in_progress:'bg-purple-100 text-purple-700',
+  delayed:    'bg-orange-100 text-orange-700',
   completed:  'bg-green-100 text-green-700',
   client_approved: 'bg-emerald-100 text-emerald-700',
   client_rejected: 'bg-rose-100 text-rose-700',
@@ -397,9 +413,7 @@ export default function ClientBookingDetailModal({ bookingId, onClose, onUpdated
             <h2 className="font-bold text-gray-800 text-base leading-tight">
               {booking?.service?.title ?? 'Rezervare'}
             </h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              #{bookingId.slice(0,8).toUpperCase()}
-            </p>
+            <RefBadge id={bookingId} />
           </div>
           <button onClick={onClose}
             className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center ml-3 flex-shrink-0">
@@ -433,6 +447,17 @@ export default function ClientBookingDetailModal({ bookingId, onClose, onUpdated
                   <p className="text-xs text-gray-400">total cu comision</p>
                 </div>
               </div>
+
+              {booking.status === 'delayed' && (
+                <div className="rounded-xl border border-orange-200 bg-orange-50 p-3.5">
+                  <p className="text-sm font-bold text-orange-800">Rezervare marcată ca întârziată</p>
+                  {booking.delay_reason ? (
+                    <p className="text-xs text-orange-700 mt-1">Motiv: {booking.delay_reason}</p>
+                  ) : (
+                    <p className="text-xs text-orange-700 mt-1">Handymanul a anunțat o întârziere pentru această rezervare.</p>
+                  )}
+                </div>
+              )}
 
               {/* Photos din serviciu */}
               <PhotoGallery photos={photos}/>
@@ -625,7 +650,7 @@ export default function ClientBookingDetailModal({ bookingId, onClose, onUpdated
               )}
 
               {/* Reprogramare */}
-              {['confirmed','assigned','in_progress'].includes(booking.status) && (
+              {['confirmed','assigned','in_progress','delayed'].includes(booking.status) && (
                 <div className="border border-blue-100 rounded-xl overflow-hidden">
                   {reschedDone ? (
                     <div className="p-4 bg-green-50 flex items-center gap-2 text-green-700 text-sm font-medium">

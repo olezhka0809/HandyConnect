@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../supabase'
 import {
@@ -6,8 +6,27 @@ import {
   Phone, Mail, Camera, ChevronLeft, ChevronRight,
   Loader2, Shield, Briefcase, Tag, AlertTriangle, Zap,
   ImagePlus, Trash2, Upload, MessageSquare, RefreshCw,
-  CalendarClock
+  CalendarClock, Copy
 } from 'lucide-react'
+
+function TaskRefBadge({ id }) {
+  const [copied, setCopied] = useState(false)
+  if (!id) return null
+  const ref = '#' + id.replace(/-/g, '').slice(0, 7).toUpperCase()
+  const copy = (e) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(ref).catch(() => {})
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button onClick={copy} title="Copiază referința"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 hover:bg-blue-50 hover:border-blue-200 border border-gray-200 text-gray-500 hover:text-blue-600 rounded-lg text-xs font-mono font-bold transition-all">
+      {copied ? <CheckCircle className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      {copied ? <span className="text-green-600">Copiat!</span> : ref}
+    </button>
+  )
+}
 
 const ROMANIAN_WORDS = ['ALBASTRU','RAPID','CERUL','VERDE','STEJAR','MUNTE','FULGER','ROATA','FLUTURE','CASA','DRUM','PIATRA']
 const TIME_SLOTS = [
@@ -101,6 +120,11 @@ export default function JobRequestModal({job,initialMode='details',userId,handym
   const canReschedule=['new','accepted'].includes(job.uiStatus)
   const isTask = job._type === 'task'
   const isDelayed = job.uiStatus === 'delayed'
+  const delayReasonText = [
+    job?._raw?.delay_reason,
+    job?._raw?.handyman_delay_reason,
+    job?._raw?.delay_message,
+  ].find(v => typeof v === 'string' && v.trim()) || ''
 
   const handleAccept=async()=>{
     setSaving(true);setError(null)
@@ -144,7 +168,7 @@ export default function JobRequestModal({job,initialMode='details',userId,handym
       // Call RPC with server-side validation + conflict detection
       const rpcParams = {
         [idParam]: job._id,
-        p_delay_reason: delayReason || 'Lucrarea anterioară durează mai mult.',
+        p_delay_reason: delayReason?.trim() || null,
         p_user_id: userId
       }
       
@@ -322,9 +346,15 @@ export default function JobRequestModal({job,initialMode='details',userId,handym
         {showHeader&&(
           <div className="flex items-start justify-between p-5 border-b border-gray-100 flex-shrink-0">
             <div className="flex-1 min-w-0 pr-3">
-              <div className="flex items-center gap-2 mb-0.5"><TypeBadge type={job._type}/><UrgencyBadge urgency={job.urgency}/></div>
+              <div className="flex items-center gap-2 mb-0.5">
+                <TypeBadge type={job._type}/>
+                <UrgencyBadge urgency={job.urgency}/>
+              </div>
               <h2 className="text-base font-bold text-gray-800 mt-1.5 leading-snug line-clamp-2">{job.title}</h2>
-              <p className="text-sm text-gray-500 mt-0.5">{clientName}</p>
+              <div className="flex items-center gap-2 mt-1.5">
+                <p className="text-sm text-gray-500">{clientName}</p>
+                <TaskRefBadge id={job._id} />
+              </div>
             </div>
             <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center flex-shrink-0 ml-2"><X className="w-4 h-4 text-gray-400"/></button>
           </div>
@@ -352,7 +382,18 @@ export default function JobRequestModal({job,initialMode='details',userId,handym
                 <div className="bg-white border border-gray-100 rounded-xl p-3"><p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-2">Locație</p><div className="flex items-start gap-1.5 text-sm text-gray-700"><MapPin className="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5"/><span>{job.address||'—'}</span></div></div>
               </div>
               {job.approximateDuration&&<div className="bg-white border border-gray-100 rounded-xl p-3"><p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-2">Durată estimată</p><div className="flex items-center gap-1.5 text-sm text-gray-700"><Clock className="w-3.5 h-3.5 text-gray-400"/><span>{job.approximateDuration}</span></div></div>}
-              {isDelayed&&<div className="p-3 bg-orange-50 border border-orange-200 rounded-xl"><p className="text-xs font-bold text-orange-800">Status întârziat</p><p className="text-xs text-orange-700 mt-0.5">Clientul vede întârzierea și poate decide reprogramare sau anulare.</p></div>}
+              {isDelayed&&(
+                <div className="p-3 bg-orange-50 border border-orange-200 rounded-xl space-y-1.5">
+                  <p className="text-xs font-bold text-orange-800">Status întârziat</p>
+                  <p className="text-xs text-orange-700">Clientul vede întârzierea și poate decide reprogramare sau anulare.</p>
+                  {delayReasonText && (
+                    <div className="pt-1 border-t border-orange-200">
+                      <p className="text-[11px] font-bold text-orange-700 uppercase tracking-wide">Motiv întârziere</p>
+                      <p className="text-xs text-orange-800 mt-0.5">{delayReasonText}</p>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="bg-white border border-gray-100 rounded-xl p-4">
                 <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-3">Client</p>
                 <div className="flex items-center gap-3 mb-3">
@@ -595,7 +636,6 @@ export default function JobRequestModal({job,initialMode='details',userId,handym
             {mode==='details'&&isDelayed&&(
               <>
                 <button onClick={handleResumeFromDelay} disabled={saving} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition disabled:opacity-60">{saving?<Loader2 className="w-4 h-4 animate-spin"/>:<RefreshCw className="w-4 h-4"/>}Reia Lucrarea</button>
-                <button onClick={()=>setMode('c1')} className="px-4 py-2.5 border border-green-200 text-green-700 bg-green-50 rounded-xl text-sm font-medium hover:bg-green-100 transition">Finalizează</button>
               </>
             )}
             {mode==='confirm_accept'&&<>

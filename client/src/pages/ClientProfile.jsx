@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabase'
 import DashboardNavbar from '../components/dashboard/DashboardNavbar'
 import CityAutocomplete from '../components/CityAutocomplete'
+import SecuritySettings from '../components/SecuritySettings'
 import {
   User, Bell, Shield, Tag, CreditCard, Star, MapPin, Wrench,
   Receipt, Palette, LogOut, ChevronRight, Camera, Edit2, X,
   CheckCircle, Plus, Trash2, Eye, EyeOff, Sun, Moon, Monitor,
-  Mail, Phone, Lock, AlertTriangle, Clock, Heart,Calendar 
+  Mail, Phone, Lock, AlertTriangle, Clock, Heart,Calendar
 } from 'lucide-react'
 
 const sidebarItems = [
@@ -521,63 +522,10 @@ export default function ClientProfile() {
 
             {/* SETĂRI SIGURANȚĂ */}
             {activeSection === 'security' && (
-              <div className="space-y-4">
-                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
-                  <h2 className="text-lg font-bold text-gray-800 mb-1">Setări Siguranță</h2>
-                  <p className="text-sm text-gray-500 mb-6">Gestionează securitatea contului tău</p>
-
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <Lock className="w-5 h-5 text-gray-400" />
-                        <div>
-                          <p className="font-medium text-gray-800">Schimbă Parola</p>
-                          <p className="text-xs text-gray-500">Ultima schimbare: acum 30 de zile</p>
-                        </div>
-                      </div>
-                      <button className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:bg-white transition">
-                        Schimbă
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <Shield className="w-5 h-5 text-gray-400" />
-                        <div>
-                          <p className="font-medium text-gray-800">Autentificare în 2 Pași (2FA)</p>
-                          <p className="text-xs text-gray-500">Adaugă un nivel suplimentar de securitate</p>
-                        </div>
-                      </div>
-                      <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-xs rounded-full font-medium">Dezactivat</span>
-                    </div>
-
-                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <Monitor className="w-5 h-5 text-gray-400" />
-                        <div>
-                          <p className="font-medium text-gray-800">Sesiuni Active</p>
-                          <p className="text-xs text-gray-500">1 sesiune activă pe acest dispozitiv</p>
-                        </div>
-                      </div>
-                      <button className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-600 hover:bg-white transition">
-                        Gestionează
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-between p-4 bg-red-50 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <AlertTriangle className="w-5 h-5 text-red-400" />
-                        <div>
-                          <p className="font-medium text-red-700">Șterge Contul</p>
-                          <p className="text-xs text-red-500">Acțiune permanentă și ireversibilă</p>
-                        </div>
-                      </div>
-                      <button className="px-4 py-2 border border-red-200 rounded-lg text-sm font-medium text-red-600 hover:bg-red-100 transition">
-                        Șterge
-                      </button>
-                    </div>
-                  </div>
-                </div>
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
+                <h2 className="text-lg font-bold text-gray-800 mb-1">Setări Siguranță</h2>
+                <p className="text-sm text-gray-500 mb-6">Gestionează securitatea contului tău</p>
+                <SecuritySettings />
               </div>
             )}
 

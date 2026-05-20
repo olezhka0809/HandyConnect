@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, Link, useLocation as useRouterLocation } from 'react-router-dom'
 import { supabase } from '../supabase'
 import DashboardNavbar from '../components/dashboard/DashboardNavbar'
-import useLocation from '../hooks/useLocation'
-import LocationBanner from '../components/LocationBanner'
 import ClientTaskDetailModal from '../components/dashboard/client-dashboard/ClientTaskDetailModal'
 import ClientRescheduleModal from '../components/dashboard/client-dashboard/ClientRescheduleModal'
 import ClientBookingDetailModal from '../components/dashboard/client-dashboard/ClientBookingDetailModal'
@@ -29,6 +27,76 @@ const cdAvailSlots  = (date) => {
   if (date !== CD_TODAY_STR) return TIME_SLOTS
   const nowMins = new Date().getHours() * 60 + new Date().getMinutes()
   return TIME_SLOTS.filter(t => cdToMins(t) > nowMins)
+}
+
+// Returnează sloturi libere ținând cont de programul handymanului + taskurile ocupate + buffer
+// newTaskDuration: durata estimată a noului task în minute (default 60)
+async function getHandymanAvailableSlots(handymanId, date, newTaskDuration = 60) {
+  if (!handymanId || !date) return TIME_SLOTS
+
+  const DAY_IDX_TO_KEY = ['sun','mon','tue','wed','thu','fri','sat']
+  const dayKey = DAY_IDX_TO_KEY[new Date(date + 'T00:00:00').getDay()]
+
+  const [schedRes, tasksRes, bookingsRes] = await Promise.all([
+    supabase.from('handyman_schedule').select('schedule,travel_buffer_min').eq('handyman_id', handymanId).maybeSingle(),
+    supabase.from('tasks').select('scheduled_time, estimated_duration_minutes').eq('handyman_id', handymanId).eq('scheduled_date', date).in('status', ['assigned','accepted','in_progress','delayed']),
+    supabase.from('bookings').select('scheduled_time, handyman_services(estimated_duration)').eq('handyman_id', handymanId).eq('scheduled_date', date).in('status', ['upcoming','confirmed','accepted']),
+  ])
+
+  const sched = schedRes.data
+  const buffer = sched?.travel_buffer_min ?? 15
+
+  // Sloturi din programul handymanului pentru ziua respectivă
+  let workStart = 7 * 60   // fallback 07:00
+  let workEnd   = 21 * 60  // fallback 21:00
+  let schedSlots = TIME_SLOTS
+
+  if (sched?.schedule?.[dayKey]) {
+    const daySlots = sched.schedule[dayKey]
+    if (!daySlots || daySlots.length === 0) return [] // zi nelucrătoare
+    // Calculează intervalul de lucru al zilei
+    workStart = Math.min(...daySlots.map(s => cdToMins(s.from)))
+    workEnd   = Math.max(...daySlots.map(s => cdToMins(s.to)))
+    schedSlots = TIME_SLOTS.filter(t => {
+      const mins = cdToMins(t)
+      return daySlots.some(s => mins >= cdToMins(s.from) && mins < cdToMins(s.to))
+    })
+  }
+
+  // Construiește lista de joburi ocupate [start, end]
+  const busyIntervals = []
+  ;(tasksRes.data ?? []).forEach(t => {
+    if (!t.scheduled_time) return
+    const start = cdToMins(t.scheduled_time)
+    const dur = t.estimated_duration_minutes ?? 60
+    busyIntervals.push({ start, end: start + dur })
+  })
+  ;(bookingsRes.data ?? []).forEach(b => {
+    if (!b.scheduled_time) return
+    const start = cdToMins(b.scheduled_time)
+    const durMins = parseInt(b.handyman_services?.estimated_duration ?? '') || 60
+    busyIntervals.push({ start, end: start + durMins })
+  })
+
+  const nowMins = date === CD_TODAY_STR ? new Date().getHours() * 60 + new Date().getMinutes() : 0
+
+  return schedSlots.filter(t => {
+    const slotStart = cdToMins(t)
+    const slotEnd   = slotStart + newTaskDuration
+
+    // Nu e înainte de ora curentă
+    if (slotStart <= nowMins) return false
+    // Noul task trebuie să se termine înainte de sfârşitul programului
+    if (slotEnd > workEnd) return false
+
+    // Slotul e disponibil dacă noul task [slotStart, slotEnd] + buffer
+    // nu se suprapune cu niciun job existent [job.start - buffer, job.end + buffer]
+    // Condiție conflict: slotStart + newDur + buffer > job.start  ȘI  slotStart < job.end + buffer
+    return !busyIntervals.some(job =>
+      slotStart + newTaskDuration + buffer > job.start &&
+      slotStart < job.end + buffer
+    )
+  })
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -409,8 +477,6 @@ export default function ClientDashboard() {
     }
   }, [tab, negotiations])
 
-  const { location, error: locationError } = useLocation(currentUserId)
-
   // ── load ────────────────────────────────────────────────────────────────────
   const loadDashboardData = useCallback(async () => {
     setLoading(true)
@@ -529,18 +595,78 @@ export default function ClientDashboard() {
   const handleAcceptOffer = async (neg) => {
     setNegLoading(true)
     try {
-      await supabase.from('task_offers').update({ status: 'accepted' }).eq('id', neg.id)
+      const relatedTask = tasks.find(t => t.id === neg.task_id)
+
+      // Dacă oferta are available_date setat → folosim data/ora din ofertă (handymanul a propus altă oră)
+      // Dacă nu → păstrăm data originală a clientului din task
+      const offerHasDate = neg.available_date != null
+      const finalDate = offerHasDate ? neg.available_date : (relatedTask?.scheduled_date || null)
+      const finalTime = offerHasDate ? (neg.available_time ?? relatedTask?.scheduled_time ?? null)
+                                     : (relatedTask?.scheduled_time || null)
+
+      // ── Conflict check: handymanul nu poate fi în 2 locuri simultan ──────────
+      if (finalDate && finalTime) {
+        const toM = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+        const newStart = toM(finalTime)
+        const newEnd = newStart + (neg.estimated_duration_minutes || 60)
+
+        const [{ data: tConf }, { data: bConf }] = await Promise.all([
+          supabase.from('tasks')
+            .select('id, title, scheduled_time, scheduled_end_time, estimated_duration_minutes')
+            .eq('handyman_id', neg.handyman_id)
+            .eq('scheduled_date', finalDate)
+            .in('status', ['assigned', 'accepted', 'in_progress', 'delayed'])
+            .neq('id', neg.task_id)
+            .limit(5),
+          supabase.from('bookings')
+            .select('id, scheduled_time')
+            .eq('handyman_id', neg.handyman_id)
+            .eq('scheduled_date', finalDate)
+            .in('status', ['upcoming', 'confirmed', 'accepted'])
+            .limit(5),
+        ])
+
+        const conflict = [...(tConf || []), ...(bConf || [])].find(t => {
+          const s = toM(t.scheduled_time)
+          const e = t.scheduled_end_time ? toM(t.scheduled_end_time) : s + (t.estimated_duration_minutes || 60)
+          return newStart < e && newEnd > s
+        })
+
+        if (conflict) {
+          const dateLabel = new Date(finalDate + 'T00:00:00').toLocaleDateString('ro-RO', { day: '2-digit', month: 'long' })
+          // Nu alertăm cu popup — emitem un event custom ca OfferRow să deschidă reschedule
+          setNegLoading(false)
+          window.dispatchEvent(new CustomEvent('offer-conflict', { detail: { offerId: neg.id, date: finalDate } }))
+          return
+        }
+      }
+
+      const { error: acceptOfferError } = await supabase.from('task_offers').update({ status: 'accepted' }).eq('id', neg.id)
+      if (acceptOfferError) throw acceptOfferError
       // Reject ALL other offers on this task regardless of status
-      await supabase.from('task_offers').update({ status: 'rejected' })
+      const { error: rejectOffersError } = await supabase.from('task_offers').update({ status: 'rejected' })
         .eq('task_id', neg.task_id).neq('id', neg.id)
-      await supabase.from('tasks').update({
+      if (rejectOffersError) throw rejectOffersError
+
+      // Calculează scheduled_end_time dacă avem durată și oră de start
+      let scheduledEndTime = null
+      if (finalTime && neg.estimated_duration_minutes) {
+        const [h, m] = finalTime.split(':').map(Number)
+        const endMins = h * 60 + m + neg.estimated_duration_minutes
+        scheduledEndTime = `${String(Math.floor(endMins / 60) % 24).padStart(2, '0')}:${String(endMins % 60).padStart(2, '0')}`
+      }
+
+      const { error: taskUpdateError } = await supabase.from('tasks').update({
         handyman_id: neg.handyman_id,
         status: 'assigned',
         final_price: neg.proposed_price,
-        scheduled_date: neg.available_date ?? null,
-        scheduled_time: neg.available_time ?? null,
+        scheduled_date: finalDate,
+        scheduled_time: finalTime,
+        scheduled_end_time: scheduledEndTime,
+        estimated_duration_minutes: neg.estimated_duration_minutes ?? null,
         updated_at: new Date().toISOString(),
       }).eq('id', neg.task_id)
+      if (taskUpdateError) throw taskUpdateError
       // Show success modal before reloading
       const handymanName = neg.handyman
         ? `${neg.handyman.first_name ?? ''} ${neg.handyman.last_name ?? ''}`.trim()
@@ -701,6 +827,7 @@ export default function ClientDashboard() {
 
       if (bookingStatusFilter === 'awaiting'        && !isAwaiting) return false
       if (bookingStatusFilter === 'active'          && !isActive) return false
+      if (bookingStatusFilter === 'delayed'         && b.status !== 'delayed') return false
       if (bookingStatusFilter === 'completed'       && b.status !== 'completed') return false
       if (bookingStatusFilter === 'client_approved' && b.status !== 'client_approved') return false
       if (bookingStatusFilter === 'client_rejected' && b.status !== 'client_rejected') return false
@@ -743,6 +870,7 @@ export default function ClientDashboard() {
 
       if (taskStatusFilter === 'awaiting' && !isAwaiting) return false
       if (taskStatusFilter === 'active' && !isActive) return false
+      if (taskStatusFilter === 'delayed' && t.status !== 'delayed') return false
       if (taskStatusFilter === 'completed' && t.status !== 'completed') return false
       if (taskStatusFilter === 'client_approved' && t.status !== 'client_approved') return false
       if (taskStatusFilter === 'client_rejected' && t.status !== 'client_rejected') return false
@@ -773,7 +901,6 @@ export default function ClientDashboard() {
   return (
     <div className="min-h-screen bg-gray-50">
       <DashboardNavbar />
-      <LocationBanner location={location} error={locationError} onRetry={() => window.location.reload()} />
 
       <div className="max-w-7xl mx-auto px-4 py-8">
 
@@ -1013,6 +1140,7 @@ export default function ClientDashboard() {
                     { id: 'all',             label: 'Toate' },
                     { id: 'awaiting',        label: 'În așteptare' },
                     { id: 'active',          label: 'Active' },
+                    { id: 'delayed',         label: 'Întârziate' },
                     { id: 'completed',       label: 'Finalizate' },
                     { id: 'client_approved', label: 'Acceptate' },
                     { id: 'client_rejected', label: 'Respinse' },
@@ -1223,6 +1351,7 @@ export default function ClientDashboard() {
                   { id: 'all', label: 'Toate' },
                   { id: 'awaiting', label: 'În așteptare' },
                   { id: 'active', label: 'Active' },
+                  { id: 'delayed', label: 'Întârziate' },
                   { id: 'completed', label: 'Finalizate' },
                   { id: 'rework', label: 'Relucrări', count: tasks.filter(t => {
                       const reworkSt = ['rework_pending','rework_accepted','rework_in_progress','rework_completed','rework_scheduled']
@@ -1558,6 +1687,8 @@ export default function ClientDashboard() {
                                 neg={neg}
                                 taskTitle={jobTitle}
                                 originalPrice={originalPrice}
+                                taskScheduledDate={task?.scheduled_date}
+                                taskScheduledTime={task?.scheduled_time}
                                 loading={negLoading}
                                 isUnseen={!seenOfferIds.includes(neg.id)}
                                 onAccept={() => handleAcceptOffer(neg)}
@@ -2070,7 +2201,7 @@ export default function ClientDashboard() {
 
 // ─── OFFER ROW ────────────────────────────────────────────────────────────────
 
-function OfferRow({ neg, taskTitle, originalPrice, loading, isUnseen, onAccept, onReject, onCounter }) {
+function OfferRow({ neg, taskTitle, originalPrice, taskScheduledDate, taskScheduledTime, loading, isUnseen, onAccept, onReject, onCounter }) {
   const [showCounter,    setShowCounter]    = useState(false)
   const [showReschedule, setShowReschedule] = useState(false)
   const [counterPrice,   setCounterPrice]   = useState('')
@@ -2081,6 +2212,49 @@ function OfferRow({ neg, taskTitle, originalPrice, loading, isUnseen, onAccept, 
   const [counterTime,    setCounterTime]    = useState(safeTimeInit(neg.available_date, neg.available_time))
   const [reschedDate,    setReschedDate]    = useState(safeDateInit(neg.available_date))
   const [reschedTime,    setReschedTime]    = useState(safeTimeInit(neg.available_date, neg.available_time))
+  const [availSlots,     setAvailSlots]     = useState(null) // null = neîncarcat, [] = zi ocupată, [...] = sloturi libere
+
+  // Durata noului task = din ofertă (ce a estimat handymanul), fallback 60 min
+  const newTaskDur = neg.estimated_duration_minutes || 60
+
+  // Ascultă conflictul detectat la acceptare → deschide automat secțiunea de reprogramare
+  useEffect(() => {
+    const handler = async (e) => {
+      if (e.detail?.offerId !== neg.id) return
+      setShowReschedule(true)
+      setShowCounter(false)
+      // Pre-încarcă sloturi pentru data propusă de handyman
+      const dateToLoad = safeDateInit(neg.available_date) || e.detail?.date
+      if (dateToLoad && neg.handyman_id) {
+        setReschedDate(dateToLoad)
+        setAvailSlots(null)
+        const slots = await getHandymanAvailableSlots(neg.handyman_id, dateToLoad, newTaskDur)
+        setAvailSlots(slots)
+      }
+    }
+    window.addEventListener('offer-conflict', handler)
+    return () => window.removeEventListener('offer-conflict', handler)
+  }, [neg.id, neg.handyman_id, neg.available_date, newTaskDur])
+
+  // Încarcă sloturi disponibile când clientul schimbă data de reschedule
+  const handleReschedDateChange = async (d) => {
+    setReschedDate(d)
+    setReschedTime('')
+    setAvailSlots(null)
+    if (d && neg.handyman_id) {
+      const slots = await getHandymanAvailableSlots(neg.handyman_id, d, newTaskDur)
+      setAvailSlots(slots)
+    }
+  }
+
+  const handleCounterDateChange = async (d) => {
+    setCounterDate(d)
+    setCounterTime('')
+    if (d && neg.handyman_id) {
+      const slots = await getHandymanAvailableSlots(neg.handyman_id, d, newTaskDur)
+      setAvailSlots(slots)
+    }
+  }
   const [reschedMsg,     setReschedMsg]     = useState('')
   const [handymanRounds, setHandymanRounds] = useState(0)
   const [clientRounds,   setClientRounds]   = useState(0)
@@ -2150,10 +2324,25 @@ function OfferRow({ neg, taskTitle, originalPrice, loading, isUnseen, onAccept, 
             {needsMyResponse    && <span className="px-2.5 py-0.5 bg-blue-500 text-white text-xs font-bold rounded-full animate-pulse">Răspunde</span>}
             {waitingForHandyman && <span className="px-2.5 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-full">Aștept meșter</span>}
           </div>
+          {taskScheduledDate && (
+            <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+              <Calendar className="w-3 h-3" />
+              Data ta dorită: <strong>
+                {new Date(taskScheduledDate + 'T00:00:00').toLocaleDateString('ro-RO', {day:'numeric',month:'short',year:'numeric'})}
+                {taskScheduledTime && ` la ${taskScheduledTime}`}
+              </strong>
+            </p>
+          )}
           {neg.available_date && (
-            <p className="text-sm text-gray-500 mt-0.5">
-              {new Date(neg.available_date).toLocaleDateString('ro-RO', {weekday:'short',day:'numeric',month:'short',year:'numeric'})}
-              {neg.available_time && <span className="text-blue-600"> la {neg.available_time}</span>}
+            <p className={`text-sm mt-0.5 flex items-center gap-1 ${neg.available_date !== taskScheduledDate ? 'text-amber-600' : 'text-green-600'}`}>
+              <Calendar className="w-3.5 h-3.5" />
+              Meșter disponibil: <strong>
+                {new Date(neg.available_date + 'T00:00:00').toLocaleDateString('ro-RO', {weekday:'short',day:'numeric',month:'short',year:'numeric'})}
+                {neg.available_time && ` la ${neg.available_time}`}
+              </strong>
+              {neg.available_date !== taskScheduledDate && taskScheduledDate && (
+                <span className="text-xs font-normal text-amber-500 ml-1">(dată diferită)</span>
+              )}
             </p>
           )}
           {neg.message && <p className="text-sm text-gray-500 mt-1 italic">"{neg.message}"</p>}
@@ -2206,6 +2395,20 @@ function OfferRow({ neg, taskTitle, originalPrice, loading, isUnseen, onAccept, 
       {/* Actions */}
       {needsMyResponse && !showCounter && !showReschedule && (
         <div className="mt-4 space-y-2">
+          {/* Banner ⚠ când meșterul a propus altă oră față de preferința clientului */}
+          {neg.available_date && (neg.available_date !== taskScheduledDate || neg.available_time !== taskScheduledTime) && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 text-xs text-amber-800">
+              <span>⚠</span>
+              <span>
+                Meșterul a propus o altă oră:{' '}
+                <strong>
+                  {new Date(neg.available_date + 'T00:00:00').toLocaleDateString('ro-RO', { day: '2-digit', month: 'long', year: 'numeric' })}
+                  {neg.available_time && ` la ${neg.available_time}`}
+                </strong>
+                . Dacă accepți, ora taskului se va schimba.
+              </span>
+            </div>
+          )}
           <div className="flex gap-2">
             <button onClick={onAccept} disabled={loading}
               className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 disabled:opacity-50 transition">
@@ -2295,22 +2498,31 @@ function OfferRow({ neg, taskTitle, originalPrice, loading, isUnseen, onAccept, 
           </p>
           <p className="text-xs text-yellow-600">Prețul rămâne <strong>{fmtPrice(neg.proposed_price)}</strong></p>
           <input type="date" value={reschedDate} min={CD_TODAY_STR}
-            onChange={e => { const d = e.target.value; setReschedDate(d); if (d === CD_TODAY_STR && reschedTime && cdToMins(reschedTime) <= (new Date().getHours()*60+new Date().getMinutes())) setReschedTime('') }}
+            onChange={e => handleReschedDateChange(e.target.value)}
             className="w-full px-3 py-2 border border-yellow-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-yellow-400"/>
           {reschedDate && (
-            <div>
-              <p className="text-xs text-yellow-600 mb-1.5">Ora <span className="text-yellow-400">(opțional)</span></p>
-              {cdAvailSlots(reschedDate).length === 0
-                ? <p className="text-xs text-orange-600 italic">Nu mai sunt ore disponibile azi.</p>
-                : <div className="grid grid-cols-5 gap-1.5">
-                    {cdAvailSlots(reschedDate).map(t => (
-                      <button key={t} type="button" onClick={() => setReschedTime(t === reschedTime ? '' : t)}
-                        className={`py-2 rounded-xl text-xs font-semibold border transition-all
-                          ${reschedTime === t ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white border-yellow-300 text-gray-700 hover:border-yellow-400'}`}>
-                        {t}
-                      </button>
-                    ))}
-                  </div>}
+            <div className="space-y-1.5">
+              <p className="text-xs text-yellow-600 font-medium">Ore disponibile ale meșterului</p>
+              {newTaskDur && (
+                <p className="text-xs text-gray-400">
+                  Filtrat pentru durată ~{newTaskDur >= 60
+                    ? `${Math.floor(newTaskDur/60)}h${newTaskDur%60 > 0 ? ` ${newTaskDur%60}min` : ''}`
+                    : `${newTaskDur}min`} + timp de deplasare
+                </p>
+              )}
+              {availSlots === null
+                ? <p className="text-xs text-gray-400 italic">Se încarcă disponibilitatea...</p>
+                : availSlots.length === 0
+                  ? <p className="text-xs text-orange-600 italic">Meșterul nu are ore libere în această zi pentru un task de această durată.</p>
+                  : <div className="grid grid-cols-5 gap-1.5">
+                      {availSlots.map(t => (
+                        <button key={t} type="button" onClick={() => setReschedTime(t === reschedTime ? '' : t)}
+                          className={`py-2 rounded-xl text-xs font-semibold border transition-all
+                            ${reschedTime === t ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white border-yellow-300 text-gray-700 hover:border-yellow-400'}`}>
+                          {t}
+                        </button>
+                      ))}
+                    </div>}
             </div>
           )}
           <input type="text" placeholder="Mesaj opțional..." value={reschedMsg} onChange={e => setReschedMsg(e.target.value)}

@@ -6,12 +6,31 @@ import CityAutocomplete from '../components/CityAutocomplete'
 import {
   ChevronLeft, ChevronRight, Camera, CheckCircle, X, DollarSign,
   Clock, MapPin, AlertTriangle, Zap, Phone, Mail,
-  Tag, Image, Info, Users, Heart, Search, Star, Sparkles, Loader2
+  Tag, Image, Info, Users, Heart, Search, Star, Sparkles, Loader2, Calendar
 } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 import TaskPhoto from '../components/TaskPhoto'
 
+const TIME_SLOTS = (() => {
+  const slots = []
+  for (let h = 7; h <= 21; h++) {
+    for (let m = 0; m < 60; m += 30) {
+      if (h === 21 && m > 0) break
+      slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+    }
+  }
+  return slots
+})()
+
+const JUDETE = [
+  'Alba','Arad','Argeș','Bacău','Bihor','Bistrița-Năsăud','Botoșani','Brăila',
+  'Brașov','București','Buzău','Călărași','Caraș-Severin','Cluj','Constanța',
+  'Covasna','Dâmbovița','Dolj','Galați','Giurgiu','Gorj','Harghita','Hunedoara',
+  'Ialomița','Iași','Ilfov','Maramureș','Mehedinți','Mureș','Neamț','Olt',
+  'Prahova','Sălaj','Satu Mare','Sibiu','Suceava','Teleorman','Timiș',
+  'Tulcea','Vâlcea','Vaslui','Vrancea',
+]
 
 const suggestedKeywords = [
   'urgent', 'reparație', 'montaj', 'instalare', 'înlocuire',
@@ -39,6 +58,7 @@ export default function PostTask() {
   const [budgetAiLoading, setBudgetAiLoading] = useState(false)
   const [budgetAiResult, setBudgetAiResult] = useState(null)
   const [budgetAiError, setBudgetAiError] = useState(null)
+  const [clientContext, setClientContext] = useState('')
 
   const [form, setForm] = useState({
     category: '',
@@ -60,6 +80,8 @@ export default function PostTask() {
     contactMethod: 'phone',
     specialInstructions: '',
     budget: '',
+    preferredDate: '',
+    preferredTime: '',
     notifyFavorites: false,
     notifySpecific: false,
     proposedHandymen: [],
@@ -171,7 +193,7 @@ export default function PostTask() {
   }
 
   const analyzeWithAI = async () => {
-    if (form.photos.length === 0) return
+    if (form.photos.length === 0 && !clientContext.trim()) return
     setAiLoading(true)
     setAiError(null)
     setAiDone(false)
@@ -179,6 +201,7 @@ export default function PostTask() {
       const fd = new FormData()
       form.photos.forEach(f => fd.append('photos', f))
       fd.append('categories', JSON.stringify(dbCategories.map(c => ({ name: c.name }))))
+      if (clientContext.trim()) fd.append('client_context', clientContext.trim())
 
       const res  = await fetch(`${API_URL}/api/ai/analyze-task`, { method: 'POST', body: fd })
       const json = await res.json()
@@ -238,6 +261,8 @@ export default function PostTask() {
           contact_phone: form.contactPhone,
           contact_method: form.contactMethod,
           special_instructions: form.specialInstructions || null,
+          scheduled_date: form.preferredDate || null,
+          scheduled_time: form.preferredTime || null,
           is_public: true,
           proposed_to: form.proposedHandymen,
         })
@@ -334,7 +359,7 @@ const toggleHandyman = (id) => {
   }
 
   const canProceedStep1 = form.category && form.title && form.description
-  const canProceedStep2 = form.city && form.county && form.address && form.latitude !== null && form.longitude !== null
+  const canProceedStep2 = form.city && form.county && form.address && form.preferredDate
   const canProceedStep3 = form.contactName && form.contactEmail && form.contactPhone
   const canProceedStep4 = form.sendOption === 'all' || form.proposedHandymen.length > 0
 
@@ -478,10 +503,39 @@ const toggleHandyman = (id) => {
                 <p className="text-xs text-gray-400 mt-2">{form.keywords.length}/10 cuvinte cheie</p>
               </div>
 
-              {/* Photos */}
-              <div>
-                <label className="block text-sm font-bold text-gray-800 mb-1">Adaugă poze (opțional)</label>
-                <p className="text-xs text-gray-500 mb-3">Ajută handymanii să înțeleagă mai bine problema. Max. 5 poze.</p>
+              {/* Photos + AI context */}
+              <div className="space-y-4">
+                {/* AI tip banner */}
+                <div className="flex items-start gap-2.5 p-3 bg-purple-50 border border-purple-100 rounded-xl">
+                  <Sparkles className="w-4 h-4 text-purple-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-semibold text-purple-700">Completare automată cu AI</p>
+                    <p className="text-xs text-purple-600 mt-0.5">
+                      Descrie problema cu cuvintele tale și/sau adaugă poze — AI-ul transformă totul
+                      într-un anunț <strong>tehnic</strong>, clar pentru orice meșter.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Client context textarea */}
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-1">
+                    Descrie problema cu cuvintele tale <span className="font-normal text-gray-400">(opțional)</span>
+                  </label>
+                  <textarea
+                    value={clientContext}
+                    onChange={e => setClientContext(e.target.value)}
+                    rows={3}
+                    placeholder="Ex: Chiuveta din baie curge pe sub ea, nu știu de unde exact. Sau: Ușa de la intrare nu se mai închide bine, parcă s-a strâmbat tocul..."
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none text-sm"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Scrie simplu, ca și cum ai explica unui prieten. AI-ul se ocupă de termenii tehnici.</p>
+                </div>
+
+                {/* Photos */}
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-1">Adaugă poze <span className="font-normal text-gray-400">(opțional)</span></label>
+                  <p className="text-xs text-gray-500 mb-3">Ajută handymanii să înțeleagă mai bine problema. Max. 5 poze.</p>
 
                 <div className="flex flex-wrap gap-3">
                   {photoPreviews.map((photo, i) => (
@@ -505,8 +559,8 @@ const toggleHandyman = (id) => {
                   )}
                 </div>
 
-                {/* Buton AI — apare doar dacă există poze */}
-                {photoPreviews.length > 0 && (
+                {/* Buton AI — activ dacă există poze sau text */}
+                {(photoPreviews.length > 0 || clientContext.trim()) && (
                   <div className="mt-4 space-y-2">
                     <button
                       onClick={analyzeWithAI}
@@ -516,8 +570,8 @@ const toggleHandyman = (id) => {
                         disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
                     >
                       {aiLoading
-                        ? <><Loader2 className="w-4 h-4 animate-spin"/> Analizez imaginile…</>
-                        : <><Sparkles className="w-4 h-4"/> Analizează cu AI — completează formularul automat</>
+                        ? <><Loader2 className="w-4 h-4 animate-spin"/> Generez cu AI…</>
+                        : <><Sparkles className="w-4 h-4"/> Generează titlu și descriere cu AI</>
                       }
                     </button>
 
@@ -573,6 +627,7 @@ const toggleHandyman = (id) => {
                 )}
               </div>
             </div>
+          </div>
           )}
 
           {/* STEP 2: Location & Urgency */}
@@ -694,21 +749,65 @@ const toggleHandyman = (id) => {
                 )}
               </div>
 
-              {/* Address */}
-              <div>
-                <label className="block text-sm font-bold text-gray-800 mb-2">Oraș / Județ *</label>
-                <CityAutocomplete
-                  value={form.city ? `${form.city}${form.county ? ', ' + form.county : ''}` : ''}
-                  onChange={(city) => setForm(prev => ({
-                    ...prev,
-                    city: city.name,
-                    county: city.county,
-                    latitude: city.latitude || null,
-                    longitude: city.longitude || null,
-                  }))}
-                  placeholder="Exemplu: Timișoara"
-                />
+              {/* Localitate + Județ */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">Localitate *</label>
+                  <input
+                    type="text"
+                    value={form.city}
+                    onChange={async (e) => {
+                      const cityName = e.target.value
+                      update('city', cityName)
+                      // Încearcă lookup coordonate după ce userul termină de scris
+                      if (cityName.length >= 3 && form.county) {
+                        const { data } = await supabase
+                          .from('romanian_cities')
+                          .select('latitude, longitude')
+                          .ilike('name', cityName)
+                          .eq('county', form.county)
+                          .maybeSingle()
+                        setForm(prev => ({
+                          ...prev,
+                          latitude: data?.latitude ?? null,
+                          longitude: data?.longitude ?? null,
+                        }))
+                      }
+                    }}
+                    placeholder="Ex: Timișoara, Moșnița, Lugoj"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">Județ *</label>
+                  <select
+                    value={form.county}
+                    onChange={async (e) => {
+                      const county = e.target.value
+                      setForm(prev => ({ ...prev, county, latitude: null, longitude: null }))
+                      // Re-lookup coordonate cu noul județ
+                      if (form.city.length >= 3 && county) {
+                        const { data } = await supabase
+                          .from('romanian_cities')
+                          .select('latitude, longitude')
+                          .ilike('name', form.city)
+                          .eq('county', county)
+                          .maybeSingle()
+                        if (data) setForm(prev => ({ ...prev, county, latitude: data.latitude, longitude: data.longitude }))
+                      }
+                    }}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  >
+                    <option value="">Selectează județul</option>
+                    {JUDETE.map(j => <option key={j} value={j}>{j}</option>)}
+                  </select>
+                </div>
               </div>
+              {form.city && form.county && !form.latitude && (
+                <p className="text-xs text-amber-600 flex items-center gap-1 -mt-1">
+                  <Info className="w-3 h-3" /> Localitate negăsită în lista principală — vei fi localizat aproximativ în {form.county}
+                </p>
+              )}
 
               {/* Address */}
               <div>
@@ -737,13 +836,43 @@ const toggleHandyman = (id) => {
                 />
               </div>
 
-              {/* Info box */}
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                <div className="flex items-start gap-2">
-                  <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                  <p className="text-sm text-blue-700">
-                    Data și ora exactă vor fi stabilite împreună cu handymanul după ce acesta acceptă taskul tău.
-                  </p>
+              {/* Date & Time preference */}
+              <div>
+                <h3 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-blue-500" />
+                  Când ai nevoie? *
+                </h3>
+                <p className="text-xs text-gray-500 mb-3">Handymanii vor vedea data preferată și îți vor confirma disponibilitatea.</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Data preferată *</label>
+                    <input
+                      type="date"
+                      min={new Date().toISOString().split('T')[0]}
+                      value={form.preferredDate}
+                      onChange={(e) => update('preferredDate', e.target.value)}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Ora preferată</label>
+                    <select
+                      value={form.preferredTime}
+                      onChange={(e) => update('preferredTime', e.target.value)}
+                      disabled={!form.preferredDate}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm disabled:bg-gray-50 disabled:text-gray-400 bg-white"
+                    >
+                      <option value="">— oră —</option>
+                      {TIME_SLOTS.filter(t => {
+                        if (form.preferredDate !== new Date().toISOString().split('T')[0]) return true
+                        const [h, m] = t.split(':').map(Number)
+                        const now = new Date()
+                        return h * 60 + m > now.getHours() * 60 + now.getMinutes()
+                      }).map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>
@@ -841,6 +970,15 @@ const toggleHandyman = (id) => {
                     <div className="flex justify-between">
                       <span className="text-gray-500">Buget:</span>
                       <span className="font-medium">{Number(form.budget).toLocaleString('ro-RO')} RON</span>
+                    </div>
+                  )}
+                  {form.preferredDate && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Data dorită:</span>
+                      <span className="font-medium text-blue-600">
+                        {new Date(form.preferredDate).toLocaleDateString('ro-RO', { day: '2-digit', month: 'long', year: 'numeric' })}
+                        {form.preferredTime && ` la ${form.preferredTime}`}
+                      </span>
                     </div>
                   )}
                   <div className="flex justify-between">
@@ -1111,13 +1249,24 @@ const toggleHandyman = (id) => {
                 onClick={() => {
                   setShowSuccess(false)
                   setStep(1)
-                  setForm(prev => ({
-                    ...prev,
+                  setForm({
                     category: '', customCategory: '', title: '', description: '',
                     keywords: [], photos: [], urgency: 'normal',
-                    accessInstructions: '', specialInstructions: '',
-                  }))
+                    city: '', county: '', latitude: null, longitude: null,
+                    address: '', accessInstructions: '',
+                    contactName: profile ? `${profile.first_name} ${profile.last_name}` : '',
+                    contactEmail: profile?.email || '',
+                    contactPhone: profile?.phone || '',
+                    contactMethod: 'phone', specialInstructions: '',
+                    budget: '', preferredDate: '', preferredTime: '',
+                    notifyFavorites: false, notifySpecific: false, proposedHandymen: [],
+                  })
                   setPhotoPreviews([])
+                  setBudgetAiResult(null)
+                  setBudgetAiError(null)
+                  setAiDone(false)
+                  setAiAlsoDetected([])
+                  setKeywordInput('')
                 }}
                 className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition"
               >

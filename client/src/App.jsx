@@ -9,8 +9,8 @@ import Contact from './pages/Contact'
 import Onboarding from './pages/Onboarding'
 import FindServices from './pages/FindServices'
 import HandymanProfile from './pages/HandymanProfile'
-import BookService from './pages/BookService'
 import Issues from './pages/Issues'
+import HandymanSupport from './pages/HandymanSupport'
 import PostTask from './pages/PostTask'
 import HandymanDashboard from './pages/HandymanDashboard'
 import HandymanOnboarding from './pages/HandymanOnboarding'
@@ -47,7 +47,6 @@ function App() {
         <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['client']}><ClientDashboard /></ProtectedRoute>} />
         <Route path="/find-services" element={<ProtectedRoute allowedRoles={['client']}><FindServices /></ProtectedRoute>} />
         <Route path="/handymen/:slug" element={<ProtectedRoute allowedRoles={['client']}><HandymanProfile /></ProtectedRoute>} />
-        <Route path="/book/:slug" element={<ProtectedRoute allowedRoles={['client']}><BookService /></ProtectedRoute>} />
         <Route path="/issues" element={<ProtectedRoute allowedRoles={['client']}><Issues /></ProtectedRoute>} />
         <Route path="/post-task" element={<ProtectedRoute allowedRoles={['client']}><PostTask /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute allowedRoles={['client']}><ClientProfile /></ProtectedRoute>} />
@@ -62,6 +61,7 @@ function App() {
         <Route path="/handyman/my-profile" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanMyProfile /></ProtectedRoute>} />
         <Route path="/handyman/messages" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanMessages /></ProtectedRoute>} />
         <Route path="/handyman/personal-profile" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanPersonalProfile /></ProtectedRoute>} />
+        <Route path="/handyman/support" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanSupport /></ProtectedRoute>} />
 
         {/* Admin routes — URL ascuns, fără link din aplicație */}
         <Route path="/hc-portal" element={<AdminLogin />} />

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { X, Calendar, CheckCheck, Bell, MessageSquare, XCircle, Star, CreditCard, Clock, AlertTriangle, ThumbsUp, ShieldCheck, Award, Play, CalendarClock } from 'lucide-react'
+import { X, Calendar, CheckCheck, Bell, MessageSquare, XCircle, Star, CreditCard, Clock, AlertTriangle, ThumbsUp, ShieldCheck, Award, Play, CalendarClock, Zap } from 'lucide-react'
 import { supabase } from '../supabase'
 
 const redirectMap = {
@@ -58,6 +58,9 @@ const iconMap = {
   rework_proposal:       { icon: AlertTriangle,color: 'text-yellow-600',  bg: 'bg-yellow-100' },
   // Rework scheduling
   rework_date_proposal:  { icon: CalendarClock, color: 'text-orange-500', bg: 'bg-orange-100' },
+  delay_impact:          { icon: Zap,           color: 'text-red-600',    bg: 'bg-red-100' },
+  task_delayed:          { icon: AlertTriangle,  color: 'text-orange-600', bg: 'bg-orange-100' },
+  booking_delayed:       { icon: AlertTriangle,  color: 'text-orange-600', bg: 'bg-orange-100' },
   // Handyman ← admin decisions
   verification_approved: { icon: ShieldCheck,  color: 'text-green-600',   bg: 'bg-green-100' },
   verification_rejected: { icon: XCircle,      color: 'text-red-500',     bg: 'bg-red-100' },
@@ -126,10 +129,19 @@ export default function NotificationPanel({ isOpen, onClose }) {
       return { path: '/dashboard', state: { tab: 'tasks', filter: 'completed' } }
     }
 
+    // Delay notifications should land directly in delayed sections.
+    if (notif.type === 'task_delayed' || notif.type === 'booking_delayed' || notif.type === 'delay_impact') {
+      const jobType = notif.data?.job_type || (notif.type === 'booking_delayed' ? 'booking' : 'task')
+      if (jobType === 'booking') {
+        return { path: '/dashboard', state: { tab: 'bookings', bookingFilter: 'delayed' } }
+      }
+      return { path: '/dashboard', state: { tab: 'tasks', filter: 'delayed' } }
+    }
+
     const rawPath = notif.data?.redirect || redirectMap[notif.type]
     if (!rawPath) return null
 
-    const [path, query] = rawPath.split('?')
+    const [, query] = rawPath.split('?')
     const params = new URLSearchParams(query || '')
     const state = {
       tab: params.get('tab') || undefined,
@@ -285,6 +297,10 @@ export default function NotificationPanel({ isOpen, onClose }) {
                   const config = iconMap[notif.type] || iconMap.new_message
                   const IconComponent = config.icon
 
+                  if (notif.type === 'delay_impact') {
+                    return <DelayImpactNotif key={notif.id} notif={notif} onClose={onClose} onRead={() => markAsRead(notif.id)} navigate={navigate} />
+                  }
+
                   return (
                     <div
                       key={notif.id}
@@ -344,6 +360,38 @@ export default function NotificationPanel({ isOpen, onClose }) {
           to { transform: translateX(0); opacity: 1; }
         }
       `}</style>
+    </div>
+  )
+}
+
+// ─── COMPONENTA SPECIALĂ: notificare impact întârziere (simplificată) ─────
+function DelayImpactNotif({ notif, onClose, onRead, navigate }) {
+  const openDelayedSection = () => {
+    const jobType = notif.data?.job_type || 'task'
+    onRead()
+    onClose()
+    if (jobType === 'booking') {
+      navigate('/dashboard', { state: { tab: 'bookings', bookingFilter: 'delayed' } })
+      return
+    }
+    navigate('/dashboard', { state: { tab: 'tasks', filter: 'delayed' } })
+  }
+
+  return (
+    <div
+      onClick={openDelayedSection}
+      className={`px-6 py-4 border-b border-gray-50 border-l-4 border-l-red-500 bg-red-50/60 cursor-pointer`}
+    >
+      <div className="flex items-start gap-3 mb-3">
+        <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+          <Zap className="w-5 h-5 text-red-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-gray-800">{notif.title}</p>
+          <p className="text-xs text-gray-500 mt-0.5">{notif.body}</p>
+        </div>
+      </div>
+      <div className="text-xs text-gray-500">Deschide secțiunea „Întârziate” pentru a gestiona reprogramarea sau anularea.</div>
     </div>
   )
 }

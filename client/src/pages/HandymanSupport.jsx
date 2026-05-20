@@ -1,57 +1,58 @@
 import { useState, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
 import { supabase } from '../supabase'
-import DashboardNavbar from '../components/dashboard/DashboardNavbar'
+import HandymanNavbar from '../components/handyman-dashboard/HandymanNavbar'
 import {
   MessageCircle, FileText, Phone, Search, ChevronDown, ChevronUp,
   Calendar, AlertTriangle, CreditCard, User, Shield, HelpCircle,
   Send, X, Loader2, CheckCircle, Clock, RefreshCw, ChevronRight,
-  Tag, Zap, AlertCircle, TicketCheck
+  Tag, AlertCircle, TicketCheck, Briefcase, Star, DollarSign, Wrench
 } from 'lucide-react'
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
 const REPORT_CATEGORIES = [
-  'Problemă Handyman',
-  'Problemă Plată',
+  'Problemă Plată / Comision',
+  'Problemă cu un Client',
+  'Problemă Cont / Profil',
+  'Problemă Verificare / Documente',
   'Problemă Tehnică',
-  'Siguranță',
   'Altele',
 ]
 
 const SEVERITY_LEVELS = [
-  { value: 'low',      label: 'Scăzut — Întrebare generală',          color: 'text-gray-500',  bg: 'bg-gray-100' },
-  { value: 'medium',   label: 'Mediu — Problemă care afectează UX',   color: 'text-yellow-600', bg: 'bg-yellow-50' },
-  { value: 'high',     label: 'Ridicat — Problemă urgentă',           color: 'text-orange-600', bg: 'bg-orange-50' },
-  { value: 'critical', label: 'Critic — Necesită atenție imediată',   color: 'text-red-600',   bg: 'bg-red-50' },
+  { value: 'low',      label: 'Scăzut — Întrebare generală',          color: 'text-gray-500',   bg: 'bg-gray-100' },
+  { value: 'medium',   label: 'Mediu — Problemă care afectează munca', color: 'text-yellow-600', bg: 'bg-yellow-50' },
+  { value: 'high',     label: 'Ridicat — Problemă urgentă',            color: 'text-orange-600', bg: 'bg-orange-50' },
+  { value: 'critical', label: 'Critic — Necesită atenție imediată',    color: 'text-red-600',    bg: 'bg-red-50' },
 ]
 
 const STATUS_CONFIG = {
-  open:        { label: 'Deschis',      color: 'bg-blue-100 text-blue-700',   icon: Clock },
-  in_progress: { label: 'În lucru',     color: 'bg-yellow-100 text-yellow-700', icon: RefreshCw },
-  resolved:    { label: 'Rezolvat',     color: 'bg-green-100 text-green-700', icon: CheckCircle },
-  closed:      { label: 'Închis',       color: 'bg-gray-100 text-gray-500',   icon: X },
+  open:        { label: 'Deschis',   color: 'bg-blue-100 text-blue-700',    icon: Clock },
+  in_progress: { label: 'În lucru',  color: 'bg-yellow-100 text-yellow-700', icon: RefreshCw },
+  resolved:    { label: 'Rezolvat',  color: 'bg-green-100 text-green-700',  icon: CheckCircle },
+  closed:      { label: 'Închis',    color: 'bg-gray-100 text-gray-500',    icon: X },
 }
 
 const FAQ_ITEMS = [
-  { q: 'Cum rezerv un handyman?', a: 'Din secțiunea "Caută Servicii", selectează un profesionist și apasă "Rezervă". Urmează pașii din formular pentru dată și oră.', tag: 'Rezervări' },
-  { q: 'Ce servicii oferă handymanii?', a: 'Instalații sanitare, electrice, zugrăveli, tâmplărie și reparații generale. Verifică pagina fiecărui profesionist pentru lista completă.', tag: 'Servicii' },
-  { q: 'Cât costă să angajez un handyman?', a: 'Între 50 și 200 RON/oră în funcție de serviciu și locație. Tarifele sunt afișate pe profilul fiecărui handyman.', tag: 'Prețuri' },
-  { q: 'Handymanii sunt licențiați și asigurați?', a: 'Handymanii verificați dețin licențele necesare. Profilurile verificate au badge-ul albastru de confirmare.', tag: 'Verificare' },
-  { q: 'Ce fac dacă nu sunt mulțumit de serviciu?', a: 'Contactează suportul sau deschide o dispută din dashboard-ul tău. Vom lucra cu tine pentru a rezolva situația sau oferi o rambursare.', tag: 'Satisfacție' },
-  { q: 'Cum anulез o rezervare?', a: 'Din dashboard → rezervările tale → selectează rezervarea → "Anulează". Politica de anulare gratuită se aplică cu cel puțin 24h înainte.', tag: 'Rezervări' },
+  { q: 'Cum îmi verific contul / profilul?', a: 'Din secțiunea "Verificare & Acces" din profilul personal. Încarcă actele necesare și adminul le aprobă în 24-48h. Vei fi notificat prin email.', tag: 'Verificare' },
+  { q: 'Cum primesc plata pentru joburi finalizate?', a: 'Plata este procesată după ce clientul confirmă lucrarea. Banii ajung în contul setat în secțiunea "Plăți & Venituri" din profilul tău.', tag: 'Plăți' },
+  { q: 'Ce fac dacă un client deschide o dispută neîntemeiată?', a: 'Contestează disputa din secțiunea "Job Pipeline → Dispute". Adaugă dovezi foto și o explicație. Adminul analizează și ia o decizie imparțială.', tag: 'Dispute' },
+  { q: 'Cum îmi cresc nivelul de verificare?', a: 'Finalizează joburi, primește recenzii pozitive și încarcă certificările solicitate. Nivelul crește automat pe baza activității și a documentelor aprobate.', tag: 'Cont' },
+  { q: 'Pot schimba zona de lucru?', a: 'Da, din "Profilul Personal → Zona de Lucru". Schimbarea se aplică imediat în feed-ul de taskuri.', tag: 'Zonă' },
+  { q: 'Cum gestionez un job întârziat?', a: 'Din "Job Pipeline" apasă butonul de raportare întârziere pe cardul jobului. Clientul va fi notificat automat cu motivul introdus de tine.', tag: 'Joburi' },
 ]
 
 const HELP_CATEGORIES = [
-  { icon: Calendar,      title: 'Rezervări & Programări',  desc: 'Ajutor cu rezervări și modificări',        links: ['Cum rezerv un serviciu', 'Reprogramare întâlniri'] },
-  { icon: AlertTriangle, title: 'Probleme Handyman',        desc: 'Raportează probleme sau nemulțumiri',       links: ['Raportează comportament', 'Probleme de calitate'] },
-  { icon: CreditCard,    title: 'Plăți & Facturare',        desc: 'Plăți, rambursări și facturi',             links: ['Plată neprocesată', 'Cerere rambursare'] },
-  { icon: User,          title: 'Cont & Profil',            desc: 'Ajutor cu setările contului',              links: ['Actualizare informații', 'Resetare parolă'] },
-  { icon: Shield,        title: 'Siguranță & Securitate',   desc: 'Raportează probleme de siguranță',         links: ['Activitate suspectă', 'Ghid siguranță'] },
-  { icon: HelpCircle,    title: 'Alte Întrebări',           desc: 'Întrebări generale și feedback',           links: ['Cum funcționează HandyConnect', 'Funcționalități aplicație'] },
+  { icon: Briefcase,     title: 'Joburi & Pipeline',           desc: 'Acceptare, finalizare, disputuri',          links: ['Cum accept un job', 'Raportare întârziere'] },
+  { icon: DollarSign,    title: 'Plăți & Comisioane',          desc: 'Plăți primite, comisioane, facturi',        links: ['Cum primesc plata', 'Comision platformă'] },
+  { icon: Shield,        title: 'Verificare & Documente',      desc: 'Nivel verificare, acte, licențe',           links: ['Cum mă verific', 'Documente necesare'] },
+  { icon: User,          title: 'Cont & Profil',               desc: 'Setări cont, parolă, informații',           links: ['Actualizare informații', 'Resetare parolă'] },
+  { icon: Star,          title: 'Recenzii & Rating',           desc: 'Recenzii primite, contestații',             links: ['Contestă o recenzie', 'Cresc ratingul'] },
+  { icon: HelpCircle,    title: 'Alte Întrebări',              desc: 'Întrebări generale despre platformă',       links: ['Cum funcționează HandyConnect', 'Reguli platformă'] },
 ]
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
 function SeverityBadge({ value }) {
   const s = SEVERITY_LEVELS.find(x => x.value === value)
@@ -75,35 +76,33 @@ function formatDate(iso) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-export default function Issues() {
+export default function HandymanSupport() {
   const location = useLocation()
-  const [activeTab,   setActiveTab]   = useState(() => {
+  const [activeTab,  setActiveTab]  = useState(() => {
     const params = new URLSearchParams(window.location.search)
     return params.get('tab') ?? 'help'
   })
-  const [userId,      setUserId]      = useState(null)
-  const [faqSearch,   setFaqSearch]   = useState('')
-  const [openFaq,     setOpenFaq]     = useState(null)
+  const [userId,     setUserId]     = useState(null)
+  const [faqSearch,  setFaqSearch]  = useState('')
+  const [openFaq,    setOpenFaq]    = useState(null)
 
   // form
-  const [form,        setForm]        = useState({ category: '', severity: '', title: '', description: '', booking_id: '', task_id: '' })
-  const [submitting,  setSubmitting]  = useState(false)
-  const [submitOk,    setSubmitOk]    = useState(false)
-  const [submitErr,   setSubmitErr]   = useState('')
+  const [form,       setForm]       = useState({ category: '', severity: '', title: '', description: '', task_id: '' })
+  const [submitting, setSubmitting] = useState(false)
+  const [submitOk,   setSubmitOk]   = useState(false)
+  const [submitErr,  setSubmitErr]  = useState('')
 
   // tickets list
-  const [tickets,     setTickets]     = useState([])
-  const [loadingT,    setLoadingT]    = useState(false)
-  const [openTicket,  setOpenTicket]  = useState(null)
+  const [tickets,    setTickets]    = useState([])
+  const [loadingT,   setLoadingT]   = useState(false)
+  const [openTicket, setOpenTicket] = useState(null)
 
-  // ── sync tab from URL when navigation happens ──────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(location.search)
     const tab = params.get('tab')
     if (tab) setActiveTab(tab)
   }, [location.search])
 
-  // ── init ───────────────────────────────────────────────────────────────────
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) setUserId(user.id)
@@ -114,52 +113,47 @@ export default function Issues() {
     if (activeTab === 'tickets' && userId) loadTickets()
   }, [activeTab, userId])
 
-  // ── load tickets ───────────────────────────────────────────────────────────
   async function loadTickets() {
     setLoadingT(true)
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('support_tickets')
       .select('*')
-      .eq('client_id', userId)
+      .eq('handyman_id', userId)
       .order('created_at', { ascending: false })
-    if (!error) setTickets(data ?? [])
+    setTickets(data ?? [])
     setLoadingT(false)
   }
 
-  // ── submit report ──────────────────────────────────────────────────────────
   async function handleSubmit(e) {
     e.preventDefault()
     if (!userId) { setSubmitErr('Trebuie să fii autentificat.'); return }
     setSubmitting(true)
     setSubmitErr('')
 
-    const rawTaskRef = form.task_id.trim()
-    const isTaskUuid = /^[0-9a-f-]{36}$/i.test(rawTaskRef)
-    const descWithRef = rawTaskRef && !isTaskUuid
-      ? `${form.description}\n\n[Referință task: ${rawTaskRef}]`
+    const rawRef = form.task_id.trim()
+    const isUuid = /^[0-9a-f-]{36}$/i.test(rawRef)
+    const desc = rawRef && !isUuid
+      ? `${form.description}\n\n[Referință task: ${rawRef}]`
       : form.description
 
-    const payload = {
-      client_id:   userId,
-      submitted_by: 'client',
-      status:      'open',
-      category:    form.category,
-      severity:    form.severity,
-      title:       form.title,
-      description: descWithRef,
-      booking_id:  form.booking_id.trim() || null,
-      task_id:     isTaskUuid ? rawTaskRef : null,
-      updated_at:  new Date().toISOString(),
-    }
+    const { error } = await supabase.from('support_tickets').insert({
+      handyman_id:  userId,
+      submitted_by: 'handyman',
+      status:       'open',
+      category:     form.category,
+      severity:     form.severity,
+      title:        form.title,
+      description:  desc,
+      task_id:      isUuid ? rawRef : null,
+      updated_at:   new Date().toISOString(),
+    })
 
-    const { error } = await supabase.from('support_tickets').insert(payload)
     setSubmitting(false)
-
     if (error) {
       setSubmitErr('Eroare la trimitere. Încearcă din nou.')
     } else {
       setSubmitOk(true)
-      setForm({ category: '', severity: '', title: '', description: '', booking_id: '', task_id: '' })
+      setForm({ category: '', severity: '', title: '', description: '', task_id: '' })
       setTimeout(() => setSubmitOk(false), 5000)
     }
   }
@@ -171,14 +165,14 @@ export default function Issues() {
   // ═══════════════════════════════════════════════════════════════════════════
   return (
     <div className="min-h-screen bg-gray-50">
-      <DashboardNavbar />
+      <HandymanNavbar />
 
       <div className="max-w-5xl mx-auto px-4 py-8">
 
         {/* ── HEADER ── */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-800">Suport Clienți</h1>
-          <p className="text-gray-500 mt-1 text-sm">Suntem aici să te ajutăm cu rezervări, plăți și orice alte întrebări.</p>
+          <h1 className="text-2xl font-bold text-gray-800">Suport Meșteri</h1>
+          <p className="text-gray-500 mt-1 text-sm">Suntem aici să te ajutăm cu joburi, plăți și orice alte întrebări.</p>
         </div>
 
         {/* ── QUICK ACTIONS ── */}
@@ -198,6 +192,7 @@ export default function Issues() {
               </div>
             </div>
           </button>
+
           <button
             onClick={() => setActiveTab('tickets')}
             className="bg-white rounded-xl border border-gray-100 p-5 text-left hover:shadow-md hover:border-green-200 transition-all group"
@@ -213,6 +208,7 @@ export default function Issues() {
               </div>
             </div>
           </button>
+
           <div className="bg-white rounded-xl border border-gray-100 p-5">
             <div className="flex items-start gap-3">
               <div className="w-11 h-11 bg-purple-100 rounded-lg flex items-center justify-center">
@@ -251,7 +247,7 @@ export default function Issues() {
           {/* ══ HELP CENTER ══ */}
           {activeTab === 'help' && (
             <div className="p-6">
-              <h3 className="font-bold text-gray-800 mb-4">Întrebări Frecvente</h3>
+              <h3 className="font-bold text-gray-800 mb-4">Întrebări Frecvente — Meșteri</h3>
               <div className="relative mb-6">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
@@ -265,7 +261,7 @@ export default function Issues() {
 
               <div className="space-y-2 mb-8">
                 {filteredFaqs.length === 0 && (
-                  <p className="text-sm text-gray-400 text-center py-8">Niciun rezultat pentru "{faqSearch}"</p>
+                  <p className="text-sm text-gray-400 text-center py-8">Niciun rezultat pentru „{faqSearch}"</p>
                 )}
                 {filteredFaqs.map((faq, i) => (
                   <div key={i} className="border border-gray-100 rounded-xl overflow-hidden">
@@ -323,7 +319,7 @@ export default function Issues() {
                   <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
                   <div>
                     <p className="text-sm font-bold text-green-700">Tichetul a fost trimis cu succes!</p>
-                    <p className="text-xs text-green-600 mt-0.5">Vei primi o notificare când adminul îți răspunde. Poți urmări statusul în "Tichetele Mele".</p>
+                    <p className="text-xs text-green-600 mt-0.5">Vei primi o notificare când adminul îți răspunde. Urmărește statusul în „Tichetele Mele".</p>
                   </div>
                 </div>
               )}
@@ -336,21 +332,19 @@ export default function Issues() {
               )}
 
               <form onSubmit={handleSubmit} className="space-y-5">
-                {/* Title */}
                 <div>
                   <label className="block text-sm font-bold text-gray-800 mb-1.5">Titlu problemă <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={form.title}
                     onChange={e => setForm(p => ({ ...p, title: e.target.value }))}
-                    placeholder="Ex: Nu pot anula rezervarea #123"
+                    placeholder="Ex: Nu am primit plata pentru jobul #123"
                     className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-4">
-                  {/* Category */}
                   <div>
                     <label className="block text-sm font-bold text-gray-800 mb-1.5">Categorie <span className="text-red-500">*</span></label>
                     <select
@@ -364,7 +358,6 @@ export default function Issues() {
                     </select>
                   </div>
 
-                  {/* Severity */}
                   <div>
                     <label className="block text-sm font-bold text-gray-800 mb-1.5">Severitate <span className="text-red-500">*</span></label>
                     <select
@@ -379,46 +372,34 @@ export default function Issues() {
                   </div>
                 </div>
 
-                {/* Description */}
                 <div>
                   <label className="block text-sm font-bold text-gray-800 mb-1.5">Descrie problema <span className="text-red-500">*</span></label>
                   <textarea
                     value={form.description}
                     onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-                    placeholder="Descrie în detaliu problema întâlnită, când a apărut și ce ai încercat…"
+                    placeholder="Descrie în detaliu problema întâlnită, când a apărut și ce ai încercat deja…"
                     rows={5}
                     className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                     required
                   />
                 </div>
 
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-bold text-gray-800 mb-1.5">ID Rezervare <span className="text-gray-400 font-normal">(opțional)</span></label>
-                    <input
-                      type="text"
-                      value={form.booking_id}
-                      onChange={e => setForm(p => ({ ...p, booking_id: e.target.value }))}
-                      placeholder="UUID rezervare"
-                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-gray-800 mb-1.5">ID Task <span className="text-gray-400 font-normal">(opțional)</span></label>
-                    <input
-                      type="text"
-                      value={form.task_id}
-                      onChange={e => setForm(p => ({ ...p, task_id: e.target.value }))}
-                      placeholder="UUID task"
-                      className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-1.5">Referință task afectat <span className="text-gray-400 font-normal">(opțional)</span></label>
+                  <input
+                    type="text"
+                    value={form.task_id}
+                    onChange={e => setForm(p => ({ ...p, task_id: e.target.value }))}
+                    placeholder="Ex: #42 sau UUID-ul complet al task-ului"
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Codul (ex: #3F4A2B1) îl găsești pe cardul jobului din Job Pipeline sau Feed Taskuri.</p>
                 </div>
 
                 <div className="flex justify-end gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={() => setForm({ category: '', severity: '', title: '', description: '', booking_id: '', task_id: '' })}
+                    onClick={() => setForm({ category: '', severity: '', title: '', description: '', task_id: '' })}
                     className="px-5 py-2.5 border border-gray-200 rounded-xl text-gray-600 text-sm font-medium hover:bg-gray-50 transition"
                   >
                     Resetează
@@ -468,7 +449,6 @@ export default function Issues() {
                 <div className="space-y-3">
                   {tickets.map(t => (
                     <div key={t.id} className="border border-gray-100 rounded-xl overflow-hidden">
-                      {/* Header row */}
                       <button
                         onClick={() => setOpenTicket(openTicket === t.id ? null : t.id)}
                         className="w-full flex items-center gap-3 p-4 text-left hover:bg-gray-50 transition"
@@ -489,7 +469,6 @@ export default function Issues() {
                           : <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />}
                       </button>
 
-                      {/* Expanded */}
                       {openTicket === t.id && (
                         <div className="px-4 pb-4 space-y-4 border-t border-gray-100 pt-4">
                           <div>
@@ -497,27 +476,25 @@ export default function Issues() {
                             <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{t.description}</p>
                           </div>
 
-                          {(t.booking_id || t.task_id) && (
-                            <div className="flex gap-4 text-xs text-gray-500">
-                              {t.booking_id && <span>Rezervare: <code className="bg-gray-100 px-1 rounded">{t.booking_id}</code></span>}
-                              {t.task_id    && <span>Task: <code className="bg-gray-100 px-1 rounded">{t.task_id}</code></span>}
-                            </div>
+                          {t.task_id && (
+                            <p className="text-xs text-gray-500">Task: <code className="bg-gray-100 px-1 rounded">{t.task_id}</code></p>
                           )}
 
                           {t.admin_response ? (
                             <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
-                              <p className="text-xs font-bold text-blue-700 mb-1 flex items-center gap-1">
-                                <CheckCircle className="w-3.5 h-3.5" /> Răspuns Admin
-                              </p>
-                              <p className="text-sm text-blue-800 leading-relaxed whitespace-pre-wrap">{t.admin_response}</p>
-                              {t.resolved_at && (
-                                <p className="text-xs text-blue-400 mt-2">Rezolvat la: {formatDate(t.resolved_at)}</p>
-                              )}
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-6 h-6 rounded-full bg-blue-600 flex items-center justify-center">
+                                  <Shield className="w-3 h-3 text-white" />
+                                </div>
+                                <p className="text-xs font-bold text-blue-700">Răspuns Admin</p>
+                                {t.resolved_at && <span className="text-xs text-blue-400 ml-auto">{formatDate(t.resolved_at)}</span>}
+                              </div>
+                              <p className="text-sm text-blue-800 leading-relaxed">{t.admin_response}</p>
                             </div>
                           ) : (
-                            <div className="bg-yellow-50 border border-yellow-100 rounded-xl p-3 flex items-center gap-2">
-                              <Clock className="w-4 h-4 text-yellow-500 flex-shrink-0" />
-                              <p className="text-xs text-yellow-700">Tichetul a fost primit. Un admin va răspunde în curând.</p>
+                            <div className="flex items-center gap-2 text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
+                              <Clock className="w-3.5 h-3.5" />
+                              Se așteaptă răspunsul adminului — vei fi notificat când răspunde.
                             </div>
                           )}
                         </div>
@@ -531,23 +508,26 @@ export default function Issues() {
 
           {/* ══ CONTACT ══ */}
           {activeTab === 'contact' && (
-            <div className="p-6">
-              <h3 className="font-bold text-gray-800 mb-6">Informații de Contact</h3>
+            <div className="p-6 space-y-6">
+              <div>
+                <h3 className="font-bold text-gray-800 mb-1">Contactează-ne</h3>
+                <p className="text-sm text-gray-500">Alege metoda de contact preferată.</p>
+              </div>
               <div className="grid md:grid-cols-2 gap-4">
                 {[
-                  { icon: Phone,         bg: 'bg-blue-100',   iconCls: 'text-blue-600',   title: 'Telefon',          info: '+40 123 456 789',          sub: 'Luni - Vineri, 08:00 - 18:00' },
-                  { icon: MessageCircle, bg: 'bg-green-100',  iconCls: 'text-green-600',  title: 'Live Chat',         info: 'Disponibil pe platformă',   sub: 'Online acum',         subCls: 'text-green-600' },
-                  { icon: FileText,      bg: 'bg-purple-100', iconCls: 'text-purple-600', title: 'Email Suport',      info: 'suport@handyconnect.ro',    sub: 'Răspuns în max. 24 ore' },
-                  { icon: AlertTriangle, bg: 'bg-red-100',    iconCls: 'text-red-500',    title: 'Urgențe',           info: '+40 123 456 000',           sub: 'Disponibil 24/7',     subCls: 'text-red-500' },
+                  { icon: MessageCircle, title: 'Chat Live',        desc: 'Disponibil Lun–Vin 9:00–18:00',   val: 'Deschide chat-ul', color: 'blue' },
+                  { icon: Phone,         title: 'Telefon',           desc: 'Apelează-ne pentru urgențe',      val: '0800-HANDY-HELP',  color: 'green' },
+                  { icon: FileText,      title: 'Email Suport',      desc: 'Răspuns în max 4 ore lucrătoare', val: 'suport@handyconnect.ro', color: 'purple' },
+                  { icon: Calendar,      title: 'Programează apel',  desc: 'Alege un slot pentru a fi sunat', val: 'Programează',      color: 'orange' },
                 ].map(item => (
-                  <div key={item.title} className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className={`w-10 h-10 ${item.bg} rounded-lg flex items-center justify-center flex-shrink-0`}>
-                      <item.icon className={`w-5 h-5 ${item.iconCls}`} />
+                  <div key={item.title} className="border border-gray-100 rounded-xl p-5 flex items-start gap-4">
+                    <div className={`w-10 h-10 bg-${item.color}-100 rounded-lg flex items-center justify-center flex-shrink-0`}>
+                      <item.icon className={`w-5 h-5 text-${item.color}-600`} />
                     </div>
                     <div>
                       <p className="font-bold text-gray-800 text-sm">{item.title}</p>
-                      <p className="text-sm text-gray-600 mt-0.5">{item.info}</p>
-                      <p className={`text-xs mt-1 ${item.subCls ?? 'text-gray-400'}`}>{item.sub}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{item.desc}</p>
+                      <p className={`text-xs font-semibold text-${item.color}-600 mt-1.5`}>{item.val}</p>
                     </div>
                   </div>
                 ))}

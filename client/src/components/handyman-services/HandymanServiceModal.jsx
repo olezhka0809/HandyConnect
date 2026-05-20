@@ -163,6 +163,7 @@ export default function HandymanServiceModal({ serviceId, onClose, onUpdated }) 
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [descAiLoading,  setDescAiLoading]  = useState(false)
   const [descAiError,    setDescAiError]    = useState(null)
+  const [keywordInput,   setKeywordInput]   = useState('')
 
   // ── load ───────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -378,12 +379,43 @@ export default function HandymanServiceModal({ serviceId, onClose, onUpdated }) 
       })
       const json = await res.json()
       if (!json.ok) throw new Error(json.error || 'Eroare AI')
-      setEditForm(p => ({ ...p, description: json.data.description }))
+      const d = json.data
+      setEditForm(p => ({
+        ...p,
+        description:        d.description || p.description,
+        // completează durata doar dacă nu era setată
+        estimated_duration: p.estimated_duration || d.suggested_duration || p.estimated_duration,
+        // completează prețul de bază doar dacă nu era setat
+        base_price:         p.base_price || (d.suggested_base_price ? String(d.suggested_base_price) : p.base_price),
+        // adaugă keyword-urile AI la cele existente (fără duplicate)
+        keywords: (() => {
+          const existing = p.keywords ? p.keywords.split(',').map(k => k.trim()).filter(Boolean) : []
+          const aiKw     = Array.isArray(d.keywords) ? d.keywords.map(k => k.trim()).filter(Boolean) : []
+          return [...new Set([...existing, ...aiKw])].join(', ')
+        })(),
+      }))
     } catch (e) {
       setDescAiError(e.message || 'Generarea a eșuat.')
     } finally {
       setDescAiLoading(false)
     }
+  }
+
+  const currentKeywords = editForm.keywords
+    ? editForm.keywords.split(',').map(k => k.trim()).filter(Boolean)
+    : []
+
+  const addKeyword = (raw) => {
+    const kw = raw.trim().toLowerCase()
+    if (!kw || currentKeywords.includes(kw) || currentKeywords.length >= 10) return
+    const next = [...currentKeywords, kw].join(', ')
+    setEditForm(p => ({ ...p, keywords: next }))
+    setKeywordInput('')
+  }
+
+  const removeKeyword = (kw) => {
+    const next = currentKeywords.filter(k => k !== kw).join(', ')
+    setEditForm(p => ({ ...p, keywords: next }))
   }
 
   // ── render ───────────────────────────────────────────────────────────────────
@@ -696,18 +728,7 @@ export default function HandymanServiceModal({ serviceId, onClose, onUpdated }) 
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-sm font-bold text-gray-700">Descriere</label>
-                  {editForm.title && (
-                    <button onClick={generateDescriptionWithAI} disabled={descAiLoading}
-                      className="flex items-center gap-1 text-xs font-semibold text-purple-600 hover:text-purple-800 transition disabled:opacity-50">
-                      {descAiLoading
-                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin"/> Generez…</>
-                        : <><Sparkles className="w-3.5 h-3.5"/> Completează cu AI</>
-                      }
-                    </button>
-                  )}
-                </div>
+                <label className="block text-sm font-bold text-gray-700 mb-1.5">Descriere</label>
                 <textarea value={editForm.description}
                   onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
                   rows={3} placeholder="Descrie serviciul oferit..."
@@ -716,6 +737,20 @@ export default function HandymanServiceModal({ serviceId, onClose, onUpdated }) 
                   <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3"/>{descAiError}
                   </p>
+                )}
+                {editForm.title && (
+                  <button
+                    onClick={generateDescriptionWithAI}
+                    disabled={descAiLoading}
+                    className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm transition-all
+                      bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700
+                      disabled:opacity-60 disabled:cursor-not-allowed shadow-sm"
+                  >
+                    {descAiLoading
+                      ? <><Loader2 className="w-4 h-4 animate-spin"/> Generez cu AI…</>
+                      : <><Sparkles className="w-4 h-4"/> Completează automat cu AI</>
+                    }
+                  </button>
                 )}
               </div>
 
@@ -763,12 +798,38 @@ export default function HandymanServiceModal({ serviceId, onClose, onUpdated }) 
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1.5">Cuvinte cheie</label>
-                <input type="text" value={editForm.keywords}
-                  onChange={e => setEditForm(p => ({ ...p, keywords: e.target.value }))}
-                  placeholder="Ex: prize, cablaj, urgență"
-                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
-                <p className="text-xs text-gray-400 mt-1">Separate prin virgulă</p>
+                <label className="block text-sm font-bold text-gray-700 mb-1.5">
+                  Cuvinte cheie
+                  <span className="text-gray-400 font-normal ml-1">({currentKeywords.length}/10)</span>
+                </label>
+                {currentKeywords.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {currentKeywords.map(kw => (
+                      <span key={kw} className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-200">
+                        {kw}
+                        <button onClick={() => removeKeyword(kw)} className="hover:text-red-500 transition ml-0.5">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <input
+                  type="text"
+                  value={keywordInput}
+                  onChange={e => setKeywordInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault()
+                      addKeyword(keywordInput)
+                    }
+                  }}
+                  onBlur={() => { if (keywordInput.trim()) addKeyword(keywordInput) }}
+                  placeholder="Scrie un cuvânt cheie și apasă Enter..."
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                  disabled={currentKeywords.length >= 10}
+                />
+                <p className="text-xs text-gray-400 mt-1">Apasă Enter sau virgulă pentru a adăuga. AI-ul poate sugera automat.</p>
               </div>
 
               {/* availability toggle in edit */}

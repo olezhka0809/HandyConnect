@@ -1,8 +1,22 @@
 import { useState } from 'react'
 import {
   X, Clock, CheckCircle, XCircle, Wrench, Scale, Upload,
-  Loader2, CalendarClock, AlertTriangle,
+  Loader2, CalendarClock, AlertTriangle, Copy,
 } from 'lucide-react'
+
+function RefBadge({ id }) {
+  const [copied, setCopied] = useState(false)
+  if (!id) return null
+  const ref = '#' + id.replace(/-/g, '').slice(0, 7).toUpperCase()
+  const copy = (e) => { e.stopPropagation(); navigator.clipboard.writeText(ref).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500) }
+  return (
+    <button onClick={copy} title="Copiază referința"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 hover:bg-blue-50 hover:border-blue-200 border border-gray-200 text-gray-500 hover:text-blue-600 rounded-lg text-xs font-mono font-bold transition-all">
+      {copied ? <CheckCircle className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      {copied ? <span className="text-green-600">Copiat!</span> : ref}
+    </button>
+  )
+}
 import { supabase } from '../../supabase'
 
 const ALL_TIMES = [
@@ -376,6 +390,7 @@ export default function HandymanDisputeModal({ isOpen, dispute, onClose, onRefre
               <span className={`px-2 py-0.5 rounded-full text-xs font-semibold border flex-shrink-0 ${statusCls}`}>
                 {statusLabel}
               </span>
+              {dispute.task_id && <RefBadge id={dispute.task_id} />}
             </div>
             <p className="text-xs text-gray-400">Client: {clientName}</p>
           </div>

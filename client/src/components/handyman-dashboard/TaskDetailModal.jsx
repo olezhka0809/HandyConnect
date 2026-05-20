@@ -7,8 +7,27 @@ import {
   Droplets, Square, Wrench, Paintbrush, Hammer,
   Sparkles, Flower2, Sofa, CircuitBoard, Lightbulb,
   Building2, MoreHorizontal, ChevronLeft, ChevronRight,
-  CheckCircle, Plug, Layers, Wind, CalendarClock, Plus, Trash2
+  CheckCircle, Plug, Layers, Wind, CalendarClock, Plus, Trash2, Copy
 } from 'lucide-react'
+
+function TaskRefBadge({ id }) {
+  const [copied, setCopied] = useState(false)
+  if (!id) return null
+  const ref = '#' + id.replace(/-/g, '').slice(0, 7).toUpperCase()
+  const copy = (e) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(ref).catch(() => {})
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button onClick={copy} title="Copiază referința"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 hover:bg-blue-50 hover:border-blue-200 border border-gray-200 text-gray-500 hover:text-blue-600 rounded-lg text-xs font-mono font-bold transition-all">
+      {copied ? <CheckCircle className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      {copied ? <span className="text-green-600">Copiat!</span> : ref}
+    </button>
+  )
+}
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 
@@ -367,12 +386,15 @@ export default function TaskDetailModal({ taskId, userId, onClose, onNegotiate, 
             <h3 className="text-base font-bold text-gray-800 leading-snug line-clamp-2">
               {loading ? 'Se încarcă…' : (task?.title ?? '—')}
             </h3>
-            {!loading && category && (
-              <div className="flex items-center gap-1.5 mt-1">
-                <CategoryIcon iconName={category.icon} className="w-3.5 h-3.5 text-blue-500" />
-                <span className="text-xs text-blue-600 font-medium">{category.name}</span>
-              </div>
-            )}
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              {!loading && category && (
+                <div className="flex items-center gap-1.5">
+                  <CategoryIcon iconName={category.icon} className="w-3.5 h-3.5 text-blue-500" />
+                  <span className="text-xs text-blue-600 font-medium">{category.name}</span>
+                </div>
+              )}
+              {!loading && task?.id && <TaskRefBadge id={task.id} />}
+            </div>
           </div>
           {!loading && task?.urgency && <UrgencyBadge urgency={task.urgency} />}
           <button
@@ -544,6 +566,24 @@ export default function TaskDetailModal({ taskId, userId, onClose, onNegotiate, 
 
           {!loading && task && activeTab === 'detalii' && (
             <>
+              {task.status === 'delayed' && (
+                <div className="p-3 bg-orange-50 border border-orange-200 rounded-xl space-y-1.5">
+                  <p className="text-xs font-bold text-orange-800">Status întârziat</p>
+                  <p className="text-xs text-orange-700">Clientul vede întârzierea și poate decide reprogramare sau anulare.</p>
+                  {task.delay_reason && (
+                    <div className="pt-1 border-t border-orange-200">
+                      <p className="text-[11px] font-bold text-orange-700 uppercase tracking-wide">Motivul tău:</p>
+                      <p className="text-xs text-orange-800 mt-0.5">{task.delay_reason}</p>
+                    </div>
+                  )}
+                  {task.delay_accepted_by_client && (
+                    <div className="pt-1 border-t border-orange-200 flex items-center gap-1.5">
+                      <CheckCircle className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+                      <p className="text-xs text-green-700 font-medium">Clientul a acceptat întârzierea.</p>
+                    </div>
+                  )}
+                </div>
+              )}
               {/* ── PHOTOS ── */}
               {photos.length > 0
                 ? <PhotoGallery photos={photos} />

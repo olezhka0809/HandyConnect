@@ -5,6 +5,7 @@ import HandymanNavbar from '../components/handyman-dashboard/HandymanNavbar'
 import CityAutocomplete from '../components/CityAutocomplete'
 import ScheduleEditor, { EMPTY_SCHEDULE } from '../components/ScheduleEditor'
 import { updateHandymanWorkZone } from '../utils/cityLookup'
+import SecuritySettings from '../components/SecuritySettings'
 import {
   User, Bell, Shield, Award, Star, MapPin, Calendar,
   Receipt, Palette, LogOut, ChevronRight, Camera, Edit2, X,
@@ -13,7 +14,7 @@ import {
   Info, Download, Briefcase, TrendingUp, Wallet, ArrowDownRight,
   Search, ShieldCheck, Fingerprint, FileCheck, BadgeCheck,
   Image, Video, Building2, ChevronDown, ChevronUp, Eye, Send, Car,
-  Sparkles, Loader2
+  Sparkles, Loader2, DollarSign
 } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
@@ -216,9 +217,8 @@ export default function HandymanPersonalProfile() {
 
   // Notifications
   const [notifSettings, setNotifSettings] = useState({
-    email_tasks: true, email_offers: true, email_messages: true, email_payments: true, email_reviews: true,
-    push_tasks: true, push_offers: true, push_messages: true, push_payments: true,
-    sms_tasks: false, sms_payments: true,
+    email_disputes: true, email_task_completed: true, email_security: true,
+    inapp_offers: true, inapp_messages: true, inapp_task_updates: true,
   })
 
   // Reviews
@@ -260,7 +260,7 @@ export default function HandymanPersonalProfile() {
       setTxLoading(true)
       const { data } = await supabase
         .from('financial_transactions')
-        .select('*')
+        .select('*, task:task_id(title, client_id, profiles!tasks_client_id_fkey(first_name, last_name))')
         .order('created_at', { ascending: false })
       setFinancialTx(data || [])
       setTxLoading(false)
@@ -291,6 +291,14 @@ export default function HandymanPersonalProfile() {
       setGraceReason(hp.grace_reason ?? null)
       setIsSuspended(hp.is_suspended ?? false)
       setSuspensionReason(hp.suspension_reason ?? null)
+      if (hp.notification_settings) setNotifSettings(prev => ({ ...prev, ...hp.notification_settings }))
+      setBillingForm({
+        company_name: hp.billing_company  || '',
+        cui:          hp.billing_cui      || '',
+        address:      hp.billing_address  || '',
+        iban:         hp.billing_iban     || '',
+        bank:         hp.billing_bank     || '',
+      })
     }
 
     // Load verifications
@@ -508,7 +516,180 @@ export default function HandymanPersonalProfile() {
     } else { alert('Orașul nu a fost găsit.') }
   }
 
-  const toggleNotif = (key) => setNotifSettings(prev => ({ ...prev, [key]: !prev[key] }))
+  // ── Billing save ──────────────────────────────────────────────────────────
+  const [billingSaving, setBillingSaving] = useState(false)
+  const [billingSaved,  setBillingSaved]  = useState(false)
+
+  async function handleSaveBilling() {
+    setBillingSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      await supabase.from('handyman_profiles').update({
+        billing_company: billingForm.company_name,
+        billing_cui:     billingForm.cui,
+        billing_address: billingForm.address,
+        billing_iban:    billingForm.iban,
+        billing_bank:    billingForm.bank,
+      }).eq('user_id', user.id)
+    }
+    setBillingSaving(false)
+    setBillingSaved(true)
+    setTimeout(() => setBillingSaved(false), 2500)
+  }
+
+  // ── Invoice generation ─────────────────────────────────────────────────────
+  const LOGO_URL = 'https://rfsombznaebjvfufxffc.supabase.co/storage/v1/object/public/assets/logo.svg'
+
+  function generateInvoice(transactions, periodLabel) {
+    const billing = billingForm
+
+    // Validare date facturare
+    if (!billing.company_name?.trim() || !billing.cui?.trim() || !billing.iban?.trim()) {
+      showToast('Completează mai întâi datele de facturare (Nume/Firmă, CUI/CNP, IBAN).', 'error')
+      setActiveSection('billing')
+      return
+    }
+
+    const now       = new Date().toLocaleDateString('ro-RO')
+    const invoiceNo = `HC-${Date.now().toString().slice(-6)}`
+    const total     = transactions.reduce((s, t) => s + Number(t.amount || 0), 0)
+
+    // Determină beneficiarul — pentru factură unică: clientul real; pentru perioadă: toți clienții unici
+    const clientNames = [...new Set(
+      transactions
+        .map(t => t.task?.profiles
+          ? `${t.task.profiles.first_name ?? ''} ${t.task.profiles.last_name ?? ''}`.trim()
+          : null)
+        .filter(Boolean)
+    )]
+    const beneficiarName = clientNames.length === 1
+      ? clientNames[0]
+      : clientNames.length > 1
+        ? clientNames.join(', ')
+        : 'Client HandyConnect'
+
+    const rows = transactions.map((t, i) => {
+      const clientName = t.task?.profiles
+        ? `${t.task.profiles.first_name ?? ''} ${t.task.profiles.last_name ?? ''}`.trim()
+        : ''
+      return `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${new Date(t.created_at).toLocaleDateString('ro-RO')}</td>
+          <td>
+            ${t.description || 'Servicii prestate'}
+            ${clientName && clientNames.length > 1 ? `<br/><span style="font-size:11px;color:#9CA3AF;">Client: ${clientName}</span>` : ''}
+          </td>
+          <td style="text-align:right;font-weight:600">${Number(t.amount).toLocaleString('ro-RO')} RON</td>
+        </tr>`
+    }).join('')
+
+    const html = `<!DOCTYPE html><html lang="ro"><head><meta charset="UTF-8"/>
+      <title>Factură ${invoiceNo}</title>
+      <style>
+        * { margin:0; padding:0; box-sizing:border-box; font-family: Arial, sans-serif; }
+        body { padding: 40px; color: #1a1a1a; }
+        .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:36px; border-bottom:3px solid #2563EB; padding-bottom:20px; }
+        .logo-wrap img { height: 48px; }
+        .logo-fallback { font-size:22px; font-weight:800; color:#2563EB; }
+        .site { font-size:11px; color:#9CA3AF; margin-top:3px; }
+        .invoice-title { font-size:30px; font-weight:800; color:#111; letter-spacing:-1px; }
+        .invoice-meta { color:#6B7280; font-size:13px; margin-top:4px; line-height:1.8; }
+        .parties { display:grid; grid-template-columns:1fr 1fr; gap:40px; margin-bottom:32px; }
+        .party { background:#F9FAFB; border-radius:8px; padding:16px 20px; }
+        .party h3 { font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#9CA3AF; margin-bottom:10px; }
+        .party p { font-size:13px; line-height:1.75; color:#374151; }
+        .party strong { color:#111; font-size:14px; }
+        table { width:100%; border-collapse:collapse; margin-bottom:0; }
+        thead tr { background:#EFF6FF; }
+        th { padding:10px 14px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#2563EB; font-weight:700; }
+        td { padding:11px 14px; font-size:13px; border-bottom:1px solid #F3F4F6; vertical-align:top; }
+        tr:last-child td { border-bottom: none; }
+        .total-section { border-top:2px solid #2563EB; padding:16px 14px; text-align:right; }
+        .total-label { font-size:13px; color:#6B7280; }
+        .total-amount { font-size:22px; font-weight:800; color:#111; margin-top:2px; }
+        .footer { margin-top:36px; padding-top:14px; border-top:1px solid #E5E7EB; font-size:11px; color:#9CA3AF; text-align:center; }
+        @media print { body { padding: 24px; } }
+      </style></head>
+      <body>
+        <div class="header">
+          <div class="logo-wrap">
+            <img src="${LOGO_URL}" alt="HandyConnect" onerror="this.style.display='none';this.nextElementSibling.style.display='block'"/>
+            <div class="logo-fallback" style="display:none">HandyConnect</div>
+            <div class="site">handyconnect.ro</div>
+          </div>
+          <div style="text-align:right">
+            <div class="invoice-title">FACTURĂ</div>
+            <div class="invoice-meta">
+              Nr. <strong>${invoiceNo}</strong><br/>
+              Data: ${now}<br/>
+              Perioadă: ${periodLabel}
+            </div>
+          </div>
+        </div>
+
+        <div class="parties">
+          <div class="party">
+            <h3>Prestator (Meșter)</h3>
+            <p><strong>${billing.company_name}</strong></p>
+            <p>CUI/CNP: ${billing.cui}</p>
+            ${billing.address ? `<p>${billing.address}</p>` : ''}
+            ${billing.iban    ? `<p>IBAN: ${billing.iban}</p>` : ''}
+            ${billing.bank    ? `<p>Bancă: ${billing.bank}</p>` : ''}
+          </div>
+          <div class="party">
+            <h3>Beneficiar (Client)</h3>
+            <p><strong>${beneficiarName}</strong></p>
+            <p style="color:#9CA3AF;font-size:12px;margin-top:4px;">Servicii prestate prin platforma HandyConnect</p>
+          </div>
+        </div>
+
+        <table>
+          <thead><tr>
+            <th style="width:32px">#</th>
+            <th style="width:90px">Data</th>
+            <th>Descriere serviciu</th>
+            <th style="text-align:right;width:110px">Sumă</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="total-section">
+          <div class="total-label">Total de plată</div>
+          <div class="total-amount">${total.toLocaleString('ro-RO')} RON</div>
+        </div>
+
+        <div class="footer">
+          Factură generată automat prin HandyConnect &middot; ${now}<br/>
+          Această factură este un document informativ generat de platformă.
+        </div>
+      </body></html>`
+
+    const win = window.open('', '_blank')
+    win.document.write(html)
+    win.document.close()
+    win.focus()
+    setTimeout(() => win.print(), 600)
+  }
+
+  function generateInvoiceForPeriod(days) {
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - days)
+    const txs = financialTx.filter(t => new Date(t.created_at) >= cutoff)
+    if (!txs.length) { showToast('Nu există tranzacții în această perioadă.', 'error'); return }
+    const label = days === 7 ? 'Ultima săptămână' : `Ultimele ${days} zile`
+    generateInvoice(txs, label)
+  }
+
+  const toggleNotif = async (key) => {
+    const updated = { ...notifSettings, [key]: !notifSettings[key] }
+    setNotifSettings(updated)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      await supabase.from('handyman_profiles')
+        .update({ notification_settings: updated })
+        .eq('user_id', user.id)
+    }
+  }
   const handleLogout = async () => { await supabase.auth.signOut(); navigate('/login') }
 
   // ─── Helpers afișare ────────────────────────────────────────────────────────
@@ -775,19 +956,18 @@ export default function HandymanPersonalProfile() {
                   <div><label className="block text-sm font-medium text-gray-500 mb-1">Telefon</label>
                     {editing ? <input type="tel" value={editForm.phone||''} onChange={e=>setEditForm(p=>({...p,phone:e.target.value}))} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" /> : <div className="flex items-center gap-2"><Phone className="w-4 h-4 text-gray-400" /><p className="text-gray-800">{profile?.phone||'Necompletat'}</p></div>}</div>
                   <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-sm font-medium text-gray-500">Bio / Descriere</label>
-                      {editing && (
-                        <button
-                          onClick={() => setShowBioAiModal(true)}
-                          className="flex items-center gap-1 text-xs font-semibold text-purple-600 hover:text-purple-800 transition"
-                        >
-                          <Sparkles className="w-3.5 h-3.5"/> Generează cu AI
-                        </button>
-                      )}
-                    </div>
+                    <label className="block text-sm font-medium text-gray-500 mb-1">Bio / Descriere</label>
                     {editing
-                      ? <textarea value={editForm.bio||''} onChange={e=>setEditForm(p=>({...p,bio:e.target.value}))} rows={3} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                      ? <>
+                          <textarea value={editForm.bio||''} onChange={e=>setEditForm(p=>({...p,bio:e.target.value}))} rows={3} className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                          <button
+                            onClick={() => setShowBioAiModal(true)}
+                            className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-semibold text-sm transition-all
+                              bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 shadow-sm"
+                          >
+                            <Sparkles className="w-4 h-4"/> Generează bio cu AI
+                          </button>
+                        </>
                       : <p className="text-gray-800">{handymanProfile?.bio||'Nedefinit'}</p>
                     }
                   </div>
@@ -1301,8 +1481,64 @@ export default function HandymanPersonalProfile() {
                     <div className="p-4 bg-gray-50 rounded-xl"><p className="text-xs text-gray-500 mb-1">Coordonate</p><p className="font-medium text-gray-800">{handymanProfile?.work_latitude?`${handymanProfile.work_latitude}°, ${handymanProfile.work_longitude}°`:'Nesetate'}</p></div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 bg-green-50 border border-green-200 rounded-xl"><div className="flex items-center gap-2 mb-2"><div className="w-3 h-3 bg-green-500 rounded-full"/><p className="text-sm font-bold text-green-700">Zona principală</p></div><p className="text-2xl font-bold text-green-800">{handymanProfile?.work_radius_km||10} km</p><p className="text-xs text-green-600 mt-1">Taskuri prioritare</p></div>
-                    <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl"><div className="flex items-center gap-2 mb-2"><div className="w-3 h-3 bg-yellow-500 rounded-full"/><p className="text-sm font-bold text-yellow-700">Zona extinsă</p></div><p className="text-2xl font-bold text-yellow-800">{handymanProfile?.extended_radius_km||10} km</p><p className="text-xs text-yellow-600 mt-1">Cu cost deplasare</p></div>
+                    <div className="p-4 bg-green-50 border border-green-200 rounded-xl"><div className="flex items-center gap-2 mb-2"><div className="w-3 h-3 bg-green-500 rounded-full"/><p className="text-sm font-bold text-green-700">Zona principală</p></div><p className="text-2xl font-bold text-green-800">{handymanProfile?.primary_city || '—'}</p><p className="text-xs text-green-600 mt-1">Același oraș — fără cost deplasare</p></div>
+                    <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl"><div className="flex items-center gap-2 mb-2"><div className="w-3 h-3 bg-yellow-500 rounded-full"/><p className="text-sm font-bold text-yellow-700">Zona extinsă</p></div><p className="text-2xl font-bold text-yellow-800">{handymanProfile?.primary_county || '—'}</p><p className="text-xs text-yellow-600 mt-1">Același județ, alt oraș</p></div>
+                  </div>
+
+                  {/* Tarif deplasare */}
+                  <div className="border border-yellow-200 rounded-xl overflow-hidden">
+                    <div className="bg-yellow-50 px-4 py-3 border-b border-yellow-100 flex items-center gap-2">
+                      <DollarSign className="w-4 h-4 text-yellow-600" />
+                      <p className="text-sm font-bold text-yellow-800">Tarif deplasare — Zona Extinsă</p>
+                    </div>
+                    <div className="p-4 space-y-3">
+                      <p className="text-xs text-gray-500">
+                        Se aplică pentru taskuri din același județ, dar alt oraș. Lasă <strong>0</strong> dacă nu percepi cost suplimentar.
+                        Dacă nu setezi niciun tarif, nu vei putea filtra taskurile după Zona Extinsă.
+                      </p>
+                      <div className="flex items-center gap-3">
+                        <div className="relative flex-1">
+                          <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={zoneForm.travel_fee ?? (handymanProfile?.travel_fee_per_km ?? '')}
+                            onChange={e => setZoneForm(p => ({ ...p, travel_fee: e.target.value }))}
+                            placeholder="Ex: 2  (RON/km)"
+                            className="w-full pl-9 pr-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-yellow-400 text-sm"
+                          />
+                        </div>
+                        <span className="text-sm text-gray-500 whitespace-nowrap">RON / km</span>
+                        <button
+                          onClick={async () => {
+                            const fee = zoneForm.travel_fee !== undefined && zoneForm.travel_fee !== ''
+                              ? Math.max(0, parseFloat(zoneForm.travel_fee) || 0)
+                              : null
+                            if (fee === null) return
+                            const { error } = await supabase.from('handyman_profiles')
+                              .update({ travel_fee_per_km: fee })
+                              .eq('user_id', profile.id)
+                            if (!error) setHandymanProfile(prev => ({ ...prev, travel_fee_per_km: fee }))
+                          }}
+                          className="px-4 py-2.5 bg-yellow-500 text-white rounded-xl text-sm font-semibold hover:bg-yellow-600 transition whitespace-nowrap"
+                        >
+                          Salvează
+                        </button>
+                      </div>
+                      {handymanProfile?.travel_fee_per_km != null && (
+                        <p className="text-xs text-green-700 font-medium">
+                          ✓ Tarif curent: {handymanProfile.travel_fee_per_km === 0
+                            ? 'fără cost deplasare'
+                            : `${handymanProfile.travel_fee_per_km} RON/km`}
+                        </p>
+                      )}
+                      {handymanProfile?.travel_fee_per_km == null && (
+                        <p className="text-xs text-amber-600 font-medium">
+                          ⚠️ Tariful nu este setat — nu poți accesa filtrul Zona Extinsă în feed
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1328,13 +1564,23 @@ export default function HandymanPersonalProfile() {
                   </div>
                 </div>
                 <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
-                  <div className="flex items-center justify-between p-6 border-b border-gray-100">
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-6 border-b border-gray-100">
                     <h2 className="text-lg font-bold text-gray-800">Istoric Tranzacții</h2>
-                    <select value={paymentFilter} onChange={e=>setPaymentFilter(e.target.value)} className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-white">
-                      <option value="all">Toate</option>
-                      <option value="processed">Procesate</option>
-                      <option value="pending">În așteptare</option>
-                    </select>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button onClick={() => generateInvoiceForPeriod(7)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-200 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-50 transition">
+                        <FileText className="w-3.5 h-3.5"/> Factură săptămânală
+                      </button>
+                      <button onClick={() => generateInvoiceForPeriod(30)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-200 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-50 transition">
+                        <FileText className="w-3.5 h-3.5"/> Factură lunară
+                      </button>
+                      <select value={paymentFilter} onChange={e=>setPaymentFilter(e.target.value)} className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-white">
+                        <option value="all">Toate</option>
+                        <option value="processed">Procesate</option>
+                        <option value="pending">În așteptare</option>
+                      </select>
+                    </div>
                   </div>
                   {txLoading ? (
                     <div className="p-8 text-center text-gray-400 text-sm">Se încarcă...</div>
@@ -1343,24 +1589,37 @@ export default function HandymanPersonalProfile() {
                   ) : (
                     <>
                       <div className="px-6 py-3 bg-gray-50 grid grid-cols-12 gap-4 text-xs font-bold text-gray-500 uppercase">
-                        <div className="col-span-5">Descriere</div>
+                        <div className="col-span-4">Descriere</div>
                         <div className="col-span-2">Tip</div>
                         <div className="col-span-2 text-right">Sumă</div>
                         <div className="col-span-2">Data</div>
                         <div className="col-span-1">Status</div>
+                        <div className="col-span-1"></div>
                       </div>
                       {filteredTx.map(t => {
                         const typeBadge = getTxTypeBadge(t.type)
                         const statusBadge = t.status === 'processed'
                           ? { label: 'Procesat', cls: 'bg-green-100 text-green-700' }
                           : { label: 'În așteptare', cls: 'bg-yellow-100 text-yellow-700' }
+                        const clientName = t.task?.profiles
+                          ? `${t.task.profiles.first_name ?? ''} ${t.task.profiles.last_name ?? ''}`.trim()
+                          : null
                         return (
                           <div key={t.id} className="px-6 py-4 grid grid-cols-12 gap-4 items-center border-b border-gray-50 hover:bg-gray-50 transition">
-                            <div className="col-span-5"><p className="font-medium text-gray-800 text-sm">{t.description}</p></div>
+                            <div className="col-span-4">
+                              <p className="font-medium text-gray-800 text-sm">{t.description}</p>
+                              {clientName && <p className="text-xs text-gray-400 mt-0.5">Client: {clientName}</p>}
+                            </div>
                             <div className="col-span-2"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${typeBadge.cls}`}>{typeBadge.label}</span></div>
                             <div className="col-span-2 text-right"><p className="text-sm font-bold text-green-700">+{Number(t.amount).toLocaleString('ro-RO')} RON</p></div>
                             <div className="col-span-2"><p className="text-sm text-gray-500">{new Date(t.created_at).toLocaleDateString('ro-RO')}</p></div>
                             <div className="col-span-1"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge.cls}`}>{statusBadge.label}</span></div>
+                            <div className="col-span-1 text-right">
+                              <button onClick={() => generateInvoice([t], new Date(t.created_at).toLocaleDateString('ro-RO'))}
+                                title="Emite factură" className="text-gray-400 hover:text-blue-600 transition">
+                                <FileText className="w-4 h-4"/>
+                              </button>
+                            </div>
                           </div>
                         )
                       })}
@@ -1373,22 +1632,67 @@ export default function HandymanPersonalProfile() {
             {/* ══ NOTIFICĂRI ══ */}
             {activeSection === 'notifications' && (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
-                <div className="p-6 border-b border-gray-100"><h2 className="text-lg font-bold text-gray-800">Setări Notificări</h2></div>
-                <div className="p-6 space-y-6">
-                  {[
-                    {title:'Email',items:[{key:'email_tasks',label:'Taskuri noi'},{key:'email_messages',label:'Mesaje'},{key:'email_payments',label:'Plăți'},{key:'email_reviews',label:'Recenzii'}]},
-                    {title:'Push',items:[{key:'push_tasks',label:'Taskuri urgente'},{key:'push_messages',label:'Mesaje noi'},{key:'push_payments',label:'Plăți procesate'}]},
-                    {title:'SMS',items:[{key:'sms_tasks',label:'Urgențe'},{key:'sms_payments',label:'Plăți importante'}]},
-                  ].map(g=>(
-                    <div key={g.title}><h3 className="font-bold text-gray-800 mb-3">{g.title}</h3><div className="space-y-3">{g.items.map(item=>(
-                      <div key={item.key} className="flex items-center justify-between py-2">
-                        <span className="text-sm text-gray-600">{item.label}</span>
-                        <button onClick={()=>toggleNotif(item.key)} className={`w-11 h-6 rounded-full relative transition-colors ${notifSettings[item.key]?'bg-blue-600':'bg-gray-200'}`}>
-                          <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 shadow transition-transform ${notifSettings[item.key]?'translate-x-5':'translate-x-0.5'}`}/>
-                        </button>
+                <div className="p-6 border-b border-gray-100">
+                  <h2 className="text-lg font-bold text-gray-800">Setări Notificări</h2>
+                  <p className="text-sm text-gray-500 mt-1">Controlează cum ești notificat despre activitatea contului tău.</p>
+                </div>
+                <div className="p-6 space-y-8">
+
+                  {/* EMAIL */}
+                  <div>
+                    <h3 className="font-bold text-gray-800 mb-1">Email</h3>
+                    <p className="text-xs text-gray-400 mb-4">Trimise prin Resend la adresa contului tău.</p>
+                    <div className="space-y-3">
+                      {[
+                        { key: 'email_disputes',      label: 'Dispute deschise / rezolvate', desc: 'Email când un client deschide o dispută sau adminul ia o decizie' },
+                        { key: 'email_task_completed', label: 'Task finalizat — confirmare',  desc: 'Email când clientul este notificat să confirme lucrarea ta' },
+                      ].map(item => (
+                        <div key={item.key} className="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
+                          <div>
+                            <p className="text-sm font-medium text-gray-700">{item.label}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">{item.desc}</p>
+                          </div>
+                          <button onClick={() => toggleNotif(item.key)}
+                            className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ml-4 ${notifSettings[item.key] ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                            <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 shadow transition-transform ${notifSettings[item.key] ? 'translate-x-5' : 'translate-x-0.5'}`}/>
+                          </button>
+                        </div>
+                      ))}
+                      {/* Securitate — mereu activ */}
+                      <div className="flex items-center justify-between py-3">
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">Securitate</p>
+                          <p className="text-xs text-gray-400 mt-0.5">Schimbare parolă și evenimente de securitate</p>
+                        </div>
+                        <span className="text-xs font-medium text-green-700 bg-green-50 px-2.5 py-1 rounded-full flex-shrink-0 ml-4">Mereu activ</span>
                       </div>
-                    ))}</div></div>
-                  ))}
+                    </div>
+                  </div>
+
+                  {/* NOTIFICĂRI ÎN APLICAȚIE */}
+                  <div>
+                    <h3 className="font-bold text-gray-800 mb-1">Notificări în aplicație</h3>
+                    <p className="text-xs text-gray-400 mb-4">Apar în timp real în clopotelul din bara de navigare.</p>
+                    <div className="space-y-3">
+                      {[
+                        { key: 'inapp_offers',       label: 'Oferte și propuneri',      desc: 'Când primești sau trimiți oferte la task-uri' },
+                        { key: 'inapp_messages',     label: 'Mesaje noi',               desc: 'Mesaje primite de la clienți în conversații active' },
+                        { key: 'inapp_task_updates', label: 'Actualizări task',          desc: 'Schimbări de status, reprogramări, confirmări' },
+                      ].map(item => (
+                        <div key={item.key} className="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
+                          <div>
+                            <p className="text-sm font-medium text-gray-700">{item.label}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">{item.desc}</p>
+                          </div>
+                          <button onClick={() => toggleNotif(item.key)}
+                            className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ml-4 ${notifSettings[item.key] ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                            <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 shadow transition-transform ${notifSettings[item.key] ? 'translate-x-5' : 'translate-x-0.5'}`}/>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                 </div>
               </div>
             )}
@@ -1396,20 +1700,9 @@ export default function HandymanPersonalProfile() {
             {/* ══ SECURITATE ══ */}
             {activeSection === 'security' && (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
-                <h2 className="text-lg font-bold text-gray-800 mb-1">Setări Siguranță</h2><p className="text-sm text-gray-500 mb-6">Gestionează securitatea contului</p>
-                <div className="space-y-4">
-                  {[
-                    {icon:Lock,title:'Schimbă Parola',desc:'Ultima schimbare: acum 30 zile',action:'Schimbă',danger:false},
-                    {icon:Shield,title:'Autentificare 2FA',desc:'Securitate suplimentară',action:'Dezactivat',danger:false,badge:true},
-                    {icon:Monitor,title:'Sesiuni Active',desc:'1 sesiune activă',action:'Gestionează',danger:false},
-                    {icon:AlertTriangle,title:'Șterge Contul',desc:'Acțiune permanentă',action:'Șterge',danger:true},
-                  ].map(item=>(
-                    <div key={item.title} className={`flex items-center justify-between p-4 rounded-xl ${item.danger?'bg-red-50':'bg-gray-50'}`}>
-                      <div className="flex items-center gap-3"><item.icon className={`w-5 h-5 ${item.danger?'text-red-400':'text-gray-400'}`}/><div><p className={`font-medium ${item.danger?'text-red-700':'text-gray-800'}`}>{item.title}</p><p className={`text-xs ${item.danger?'text-red-500':'text-gray-500'}`}>{item.desc}</p></div></div>
-                      {item.badge?<span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-xs rounded-full font-medium">{item.action}</span>:<button className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${item.danger?'border-red-200 text-red-600 hover:bg-red-100':'border-gray-200 text-gray-600 hover:bg-white'}`}>{item.action}</button>}
-                    </div>
-                  ))}
-                </div>
+                <h2 className="text-lg font-bold text-gray-800 mb-1">Setări Siguranță</h2>
+                <p className="text-sm text-gray-500 mb-6">Gestionează securitatea contului</p>
+                <SecuritySettings />
               </div>
             )}
 
@@ -1512,7 +1805,11 @@ export default function HandymanPersonalProfile() {
                     <div><label className="block text-sm font-medium text-gray-700 mb-1">IBAN *</label><input value={billingForm.iban} onChange={e=>setBillingForm(p=>({...p,iban:e.target.value}))} placeholder="RO00XXXX..." className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"/></div>
                     <div><label className="block text-sm font-medium text-gray-700 mb-1">Banca</label><input value={billingForm.bank} onChange={e=>setBillingForm(p=>({...p,bank:e.target.value}))} placeholder="BRD, BCR, ING..." className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"/></div>
                   </div>
-                  <button className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 transition">Salvează Datele</button>
+                  <button onClick={handleSaveBilling} disabled={billingSaving}
+                    className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 disabled:opacity-50 transition flex items-center gap-2">
+                    {billingSaving ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/> : null}
+                    {billingSaved ? '✓ Salvat!' : 'Salvează Datele'}
+                  </button>
                 </div>
               </div>
             )}

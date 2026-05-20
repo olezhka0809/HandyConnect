@@ -27,55 +27,90 @@ Regulile tale absolute:
 4. Ești specific: "fisură verticală de 30cm pe peretele nordic" nu "perete deteriorat"
 5. Niciodată nu confunzi o problemă de construcții cu una electrică dacă nu există elemente electrice vizibile`
 
-// ─── MODULE 1: Analiză foto → generare task ───────────────────────────────────
+// ─── MODULE 1: Analiză foto + text → generare task ───────────────────────────
 router.post('/analyze-task', upload.array('photos', 5), async (req, res) => {
   try {
-    const files = req.files ?? []
+    const files         = req.files ?? []
     const categoriesRaw = req.body.categories ?? '[]'
-    const categories = typeof categoriesRaw === 'string'
+    const clientContext = (req.body.client_context ?? '').trim()
+    const categories    = typeof categoriesRaw === 'string'
       ? JSON.parse(categoriesRaw)
       : categoriesRaw
 
-    if (files.length === 0) {
-      return res.status(400).json({ error: 'Trebuie cel puțin o fotografie.' })
+    if (files.length === 0 && !clientContext) {
+      return res.status(400).json({ error: 'Adaugă cel puțin o fotografie sau o descriere a problemei.' })
     }
 
     const catList = categories.map(c => c.name).join(' | ')
 
-    const prompt = `Analizează cu atenție imaginile atașate și identifică problemele tehnice vizibile.
-
-PASUL 1 — Scanează imaginea complet și listează TOT ce observi defect sau deteriorat:
-- Examinează fiecare colț, suprafață, material vizibil
-- Notează chiar și problemele minore pe care clientul poate nu le-a observat
-
-PASUL 2 — Identifică PROBLEMA PRINCIPALĂ (cea mai urgentă/importantă) și alege categoria:
-Categorii disponibile: ${catList}
-
-Reguli stricte de categorisire:
-- Perete crăpat / tencuială / vopsea / zugrăveală → "Zugrăveli & Vopsitorie" sau "Construcții"
-- Apă, umezeală, mucegai, robinet, chiuvetă, duș, WC → "Instalații sanitare" sau "Canalizare"
+    const categorizareRules = `Reguli de categorisire — alege categoria care corespunde CEL MAI BINE descrierii clientului:
+- Grădină, gazon, iarbă, plante, arbuști, copaci, curte, teren, peisagistică → "Grădinărit"
+- Curățenie generală, igienizare spații → "Curățenie"
+- Mobilier, raft, dulap, asamblare → "Montaj Mobilă"
+- Perete crăpat, tencuială, vopsea, zugrăveală → "Zugrăveli & Vopsitorie" sau "Construcții"
+- Apă, umezeală, mucegai, robinet, chiuvetă, duș, WC, țeavă → "Instalații sanitare" sau "Canalizare"
 - Priză, cablu, întrerupător, tablou electric, bec, fir → "Instalații Electrice" sau "Tablouri Electrice"
-- Parchet, gresie, faianță, podea deteriorată → "Parchet" sau categoria specifică
+- Parchet, gresie, faianță, podea → "Parchet" sau categoria specifică
 - Geam, ușă, fereastră → "Tâmplărie"
-- Dacă nu ești sigur → "Reparații generale"
+- Dacă nu ești sigur → "Reparații generale"`
 
-PASUL 3 — Generează JSON:
-\`\`\`json
+    const jsonSchema = `\`\`\`json
 {
-  "title": "titlu specific al problemei principale (max 60 caractere)",
-  "description": "descriere detaliată: ce material/suprafață este afectată, natura exactă a defectului, localizare, extindere aparentă (3-4 propoziții)",
-  "category": "EXACT o categorie din lista de mai sus",
+  "title": "titlu specific al lucrării solicitate (max 60 caractere)",
+  "description": "descriere clară a lucrării: ce trebuie făcut, suprafața/zona afectată, detalii relevante (3-4 propoziții)",
+  "category": "EXACT o categorie din lista disponibilă",
   "urgency": "low / normal / high",
   "keywords": ["keyword1", "keyword2", "keyword3"],
-  "also_detected": ["altă problemă observată în imagine dacă există", "a doua problemă dacă există"]
+  "also_detected": []
 }
 \`\`\`
+Urgency: high = urgent/pericol, normal = standard, low = fără grabă`
 
-Câmpul "also_detected" conține probleme SUPLIMENTARE față de cea principală, vizibile în aceeași imagine.
-Dacă nu există alte probleme → "also_detected": []
-Urgency: high = pericol sau daune în expansiune rapidă, low = estetic sau minor`
+    let prompt
+    // Folosim system prompt de construcții doar pentru analiză foto pură
+    const systemPrompt = (files.length > 0 && !clientContext) ? CONSTRUCTION_EXPERT_SYSTEM : null
 
-    const json = await generateJSON(prompt, files, CONSTRUCTION_EXPERT_SYSTEM)
+    if (files.length > 0 && clientContext) {
+      // ── Mod mixt: descrierea clientului are PRIORITATE, pozele oferă detalii vizuale ──
+      prompt = `Clientul descrie ce dorește: "${clientContext}"
+
+⚠️ REGULA PRINCIPALĂ: Descrierea clientului are PRIORITATE absolută față de orice se vede în poze.
+Dacă clientul spune "grădină" → categoria este "Grădinărit", indiferent de conținutul imaginii.
+Dacă clientul spune "zugrăvit" → categoria este zugrăveli, indiferent de imaginea.
+
+Pozele servesc DOAR pentru detalii vizuale suplimentare (dimensiuni aparente, starea terenului, etc.).
+
+Categorii disponibile: ${catList}
+${categorizareRules}
+
+Generează un anunț tehnic și clar pe înțelesul unui meșter profesionist:
+${jsonSchema}`
+
+    } else if (files.length > 0) {
+      // ── Mod foto: doar imagini ─────────────────────────────────────────────
+      prompt = `Analizează cu atenție imaginile atașate și identifică ce lucrare este necesară.
+
+Identifică tipul principal de lucrare și alege categoria din: ${catList}
+${categorizareRules}
+
+Generează JSON:
+${jsonSchema}`
+
+    } else {
+      // ── Mod text: doar descrierea clientului ──────────────────────────────
+      prompt = `Clientul descrie ce dorește: "${clientContext}"
+
+Transformă această descriere într-un anunț clar și profesionist, pe înțelesul unui meșter.
+Nu inventa detalii care nu sunt menționate.
+
+Categorii disponibile: ${catList}
+${categorizareRules}
+
+Generează JSON:
+${jsonSchema}`
+    }
+
+    const json = await generateJSON(prompt, files, systemPrompt)
     res.json({ ok: true, data: json })
   } catch (err) {
     console.error('[AI analyze-task]', err.message)
@@ -220,26 +255,37 @@ router.post('/generate-service-description', async (req, res) => {
       return res.status(400).json({ error: 'Titlul serviciului este obligatoriu.' })
     }
 
-    const prompt = `Ești un copywriter pentru platforma HandyConnect din România.
+    const priceCtx   = base_price     ? `Preț de bază: ${base_price} RON` : null
+    const hourlyCtx  = price_per_hour ? `Tarif orar: ${price_per_hour} RON/h` : null
+    const durCtx     = estimated_duration ? `Durată estimată: ${estimated_duration}` : null
+    const ctxParts   = [priceCtx, hourlyCtx, durCtx].filter(Boolean).join(' | ')
 
-Scrie o descriere atractivă pentru un serviciu de handyman:
-- Titlu serviciu: "${title}"
-- Categorie: "${category ?? ''}"
-- Preț de bază: ${base_price ? base_price + ' RON' : 'nespecificat'}
-- Tarif orar: ${price_per_hour ? price_per_hour + ' RON/h' : 'nespecificat'}
-- Durată estimată: "${estimated_duration ?? 'variabilă'}"
+    const prompt = `Ești un meșter profesionist din România care listează un serviciu pe platforma HandyConnect.
 
-Cerințe descriere:
-- 2-4 propoziții în română
-- Evidențiază beneficiile pentru client
-- Menționează ce include serviciul
-- Nu mai mult de 150 de cuvinte
-- Nu repeta prețul (e deja afișat separat)
+Serviciu: "${title}"
+Categorie: "${category ?? ''}"
+${ctxParts ? `Context: ${ctxParts}` : ''}
 
-Răspunde DOAR cu descrierea, fără explicații.`
+Scrie o descriere PROFESIONALĂ și SPECIFICĂ a acestui serviciu. Regulile sunt stricte:
+- Descrie CE FACE CONCRET meșterul: pașii de lucru, metoda, materialele/uneltele implicate
+- Specifică ce INCLUDE serviciul (ex: evaluare inițială, curățenie după lucru, garanție etc.)
+- Limbaj direct și tehnic — FĂRĂ clișee de marketing ("expert", "calitate superioară", "profesionalism")
+- NU repeta titlul ca primă propoziție
+- Maxim 100 de cuvinte, 2-3 propoziții
 
-    const description = await require('../services/gemini').generateText(prompt)
-    res.json({ ok: true, data: { description: description.trim() } })
+Generează un JSON cu câmpurile de mai jos. Pentru câmpurile de preț și durată, propune valori DOAR dacă nu sunt deja specificate în context — altfel pune null.
+\`\`\`json
+{
+  "description": "descrierea serviciului",
+  "keywords": ["3-5 cuvinte cheie tehnice relevante pentru serviciu"],
+  "suggested_duration": ${estimated_duration ? 'null' : '"durată potrivită pentru serviciu, ex: 1-2 ore"'},
+  "suggested_base_price": ${base_price ? 'null' : 'număr RON realist pentru serviciu sau null dacă nu știi'}
+}
+\`\`\``
+
+    const { generateJSON: genJSON } = require('../services/gemini')
+    const data = await genJSON(prompt, [], null)
+    res.json({ ok: true, data })
   } catch (err) {
     console.error('[AI generate-service-description]', err.message)
     res.status(500).json({ error: 'Generarea descrierii a eșuat.', detail: err.message })
@@ -282,6 +328,43 @@ Pe baza informațiilor disponibile, oferă o analiză imparțială. Răspunde DO
   } catch (err) {
     console.error('[AI analyze-dispute]', err.message)
     res.status(500).json({ error: 'Analiza disputei a eșuat.', detail: err.message })
+  }
+})
+
+// ─── MODULE 7: Estimare durată task cu AI ────────────────────────────────────
+router.post('/estimate-duration', upload.array('photos', 5), async (req, res) => {
+  try {
+    const { title = '', description = '', category = '' } = req.body
+    const files = req.files ?? []
+
+    const prompt = `Ești un asistent expert pentru meșteri din România. Analizează descrierea${files.length ? ' și pozele' : ''} acestei lucrări și estimează durata realistă de execuție.
+
+Categorie: ${category}
+Titlu: ${title}
+Descriere: ${description}
+
+Returnează DOAR un JSON valid cu această structură exactă:
+{
+  "duration_minutes": <număr întreg, multiplu de 15, minim 15, maxim 1440>,
+  "reason": "<justificare scurtă în română, max 2 propoziții>"
+}
+
+Reguli:
+- duration_minutes trebuie să fie multiplu de 15 (ex: 30, 45, 60, 90, 120, 180...)
+- Fii realist: nu subestima și nu supraestima
+- Ia în calcul deplasarea, pregătirea și curățenia după lucru`
+
+    const json = await generateJSON(prompt, files)
+
+    // Validare și normalizare
+    let mins = parseInt(json?.duration_minutes)
+    if (!mins || mins < 15) mins = 60
+    mins = Math.round(mins / 15) * 15  // snapă la multiplu de 15
+
+    res.json({ ok: true, data: { duration_minutes: mins, reason: json?.reason ?? '' } })
+  } catch (err) {
+    console.error('[AI estimate-duration]', err.message)
+    res.status(500).json({ error: 'Estimarea duratei a eșuat.', detail: err.message })
   }
 })
 
