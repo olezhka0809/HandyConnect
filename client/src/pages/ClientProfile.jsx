@@ -62,19 +62,33 @@ export default function ClientProfile() {
   const [editingReviewId, setEditingReviewId] = useState(null)
   const [reviewEditForm, setReviewEditForm] = useState({ rating: 5, title: '', description: '' })
 
-  // Notification settings
-  const [notifSettings, setNotifSettings] = useState({
-    email_bookings: true,
-    email_messages: true,
-    email_offers: true,
-    email_promotions: false,
-    push_bookings: true,
-    push_messages: true,
-    push_offers: true,
-    push_reminders: true,
-    sms_bookings: false,
-    sms_reminders: true,
+  // Cards
+  const [cards, setCards] = useState([])
+  const [showAddCard, setShowAddCard] = useState(false)
+  const [newCard, setNewCard] = useState({ cardholderName: '', cardNumber: '', expiry: '', cvv: '' })
+  const [addCardLoading, setAddCardLoading] = useState(false)
+
+  // Billing
+  const [billingType, setBillingType] = useState('individual')
+  const [billingData, setBillingData] = useState({
+    individual: { full_name: '', cnp: '', address: '' },
+    company: { company_name: '', cui: '', address: '', reg_commerce: '', iban: '', bank: '' },
   })
+  const [billingSaved, setBillingSaved] = useState(false)
+
+  const [notifSettings, setNotifSettings] = useState({
+    inapp_offers: true,
+    inapp_task_updates: true,
+    inapp_bookings: true,
+    inapp_reschedule: true,
+    inapp_disputes: true,
+    inapp_messages: true,
+    inapp_support: true,
+    email_offers: true,
+    email_task_updates: true,
+    email_bookings: true,
+  })
+  const [notifSaved, setNotifSaved] = useState(false)
 
   useEffect(() => {
     loadProfile()
@@ -92,12 +106,30 @@ export default function ClientProfile() {
     setProfile(profileData)
     setEditForm(profileData || {})
 
+    if (profileData?.notification_preferences) {
+      setNotifSettings(prev => ({ ...prev, ...profileData.notification_preferences }))
+    }
+
     const { data: addressData } = await supabase
       .from('client_addresses')
       .select('*')
       .eq('user_id', user.id)
       .order('is_primary', { ascending: false })
     setAddresses(addressData || [])
+
+    const { data: cardsData } = await supabase
+      .from('client_cards')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('is_primary', { ascending: false })
+    setCards(cardsData || [])
+
+    if (profileData?.billing_details && Object.keys(profileData.billing_details).length > 0) {
+      const bd = profileData.billing_details
+      setBillingType(bd.type || 'individual')
+      if (bd.individual) setBillingData(prev => ({ ...prev, individual: bd.individual }))
+      if (bd.company) setBillingData(prev => ({ ...prev, company: bd.company }))
+    }
 
     // Istoric taskuri
     const { data: tasksData } = await supabase
@@ -272,8 +304,71 @@ export default function ClientProfile() {
     navigate('/login')
   }
 
-  const toggleNotif = (key) => {
-    setNotifSettings(prev => ({ ...prev, [key]: !prev[key] }))
+  const formatCardNumber = (value) => {
+    const v = value.replace(/\D/g, '').slice(0, 16)
+    return v.replace(/(.{4})/g, '$1 ').trim()
+  }
+
+  const detectCardType = (number) => {
+    const n = number.replace(/\s/g, '')
+    if (n.startsWith('4')) return 'visa'
+    if (n.startsWith('5')) return 'mastercard'
+    if (n.startsWith('3')) return 'amex'
+    return 'other'
+  }
+
+  const handleAddCard = async () => {
+    const clean = newCard.cardNumber.replace(/\s/g, '')
+    if (clean.length < 13 || !newCard.expiry || !newCard.cardholderName) return
+    setAddCardLoading(true)
+    const { data, error } = await supabase.from('client_cards').insert({
+      user_id: profile.id,
+      card_type: detectCardType(clean),
+      last4: clean.slice(-4),
+      expiry: newCard.expiry,
+      cardholder_name: newCard.cardholderName,
+      is_primary: cards.length === 0,
+    }).select().single()
+    if (!error && data) {
+      setCards(prev => cards.length === 0 ? [data] : [...prev, data])
+      setShowAddCard(false)
+      setNewCard({ cardholderName: '', cardNumber: '', expiry: '', cvv: '' })
+    }
+    setAddCardLoading(false)
+  }
+
+  const deleteCard = async (id) => {
+    await supabase.from('client_cards').delete().eq('id', id)
+    setCards(prev => prev.filter(c => c.id !== id))
+  }
+
+  const setPrimaryCard = async (id) => {
+    await supabase.from('client_cards').update({ is_primary: false }).eq('user_id', profile.id)
+    await supabase.from('client_cards').update({ is_primary: true }).eq('id', id)
+    setCards(prev => prev.map(c => ({ ...c, is_primary: c.id === id })))
+  }
+
+  const saveBilling = async () => {
+    const { error } = await supabase.from('profiles').update({
+      billing_details: { type: billingType, individual: billingData.individual, company: billingData.company },
+    }).eq('id', profile.id)
+    if (!error) {
+      setBillingSaved(true)
+      setTimeout(() => setBillingSaved(false), 2000)
+    }
+  }
+
+  const toggleNotif = async (key) => {
+    const newSettings = { ...notifSettings, [key]: !notifSettings[key] }
+    setNotifSettings(newSettings)
+    const { error } = await supabase
+      .from('profiles')
+      .update({ notification_preferences: newSettings })
+      .eq('id', profile.id)
+    if (!error) {
+      setNotifSaved(true)
+      setTimeout(() => setNotifSaved(false), 2000)
+    }
   }
 
   const getStatusColor = (status) => {
@@ -476,46 +571,79 @@ export default function ClientProfile() {
             {/* NOTIFICĂRI */}
             {activeSection === 'notifications' && (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
-                <div className="p-6 border-b border-gray-100">
-                  <h2 className="text-lg font-bold text-gray-800">Setări Notificări</h2>
-                  <p className="text-sm text-gray-500">Alege cum și când vrei să fii notificat</p>
+                <div className="flex items-center justify-between p-6 border-b border-gray-100">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800">Setări Notificări</h2>
+                    <p className="text-sm text-gray-500">Alege ce notificări vrei să primești</p>
+                  </div>
+                  {notifSaved && (
+                    <span className="flex items-center gap-1.5 text-sm text-green-600 font-medium">
+                      <CheckCircle className="w-4 h-4" /> Salvat
+                    </span>
+                  )}
                 </div>
-                <div className="p-6 space-y-6">
-                  {[
-                    { title: 'Email', items: [
-                      { key: 'email_bookings', label: 'Rezervări și confirmări' },
-                      { key: 'email_messages', label: 'Mesaje de la handymani' },
-                      { key: 'email_offers', label: 'Oferte primite la taskuri' },
-                      { key: 'email_promotions', label: 'Promoții și noutăți' },
-                    ]},
-                    { title: 'Notificări Push', items: [
-                      { key: 'push_bookings', label: 'Actualizări rezervări' },
-                      { key: 'push_messages', label: 'Mesaje noi' },
-                      { key: 'push_offers', label: 'Oferte noi la taskuri' },
-                      { key: 'push_reminders', label: 'Remindere programări' },
-                    ]},
-                    { title: 'SMS', items: [
-                      { key: 'sms_bookings', label: 'Confirmări rezervări' },
-                      { key: 'sms_reminders', label: 'Remindere importante' },
-                    ]},
-                  ].map((group) => (
-                    <div key={group.title}>
-                      <h3 className="font-bold text-gray-800 mb-3">{group.title}</h3>
-                      <div className="space-y-3">
-                        {group.items.map((item) => (
-                          <div key={item.key} className="flex items-center justify-between py-2">
-                            <span className="text-sm text-gray-600">{item.label}</span>
-                            <button
-                              onClick={() => toggleNotif(item.key)}
-                              className={`w-11 h-6 rounded-full relative transition-colors ${notifSettings[item.key] ? 'bg-blue-600' : 'bg-gray-200'}`}
-                            >
-                              <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 shadow transition-transform ${notifSettings[item.key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
+                <div className="p-6 space-y-8">
+
+                  {/* IN-APP */}
+                  <div>
+                    <div className="mb-4">
+                      <h3 className="font-bold text-gray-800">Notificări în aplicație</h3>
+                      <p className="text-xs text-gray-400 mt-0.5">Apar instant în clopotelul din navigație</p>
                     </div>
-                  ))}
+                    <div className="space-y-1">
+                      {[
+                        { key: 'inapp_offers',       label: 'Oferte și negociere',      desc: 'Oferte noi, contra-oferte și task atribuit' },
+                        { key: 'inapp_task_updates',  label: 'Actualizări task',          desc: 'Meșterul a început, a finalizat sau task întârziat' },
+                        { key: 'inapp_bookings',      label: 'Rezervări',                 desc: 'Confirmare rezervare și notificări de întârziere' },
+                        { key: 'inapp_reschedule',    label: 'Reprogramări',              desc: 'Cereri de reprogramare primite de la meșteri' },
+                        { key: 'inapp_disputes',      label: 'Dispute și relucrări',      desc: 'Actualizări dispute, propuneri relucrare și decizii admin' },
+                        { key: 'inapp_messages',      label: 'Mesaje noi',                desc: 'Mesaje primite de la meșteri în chat' },
+                        { key: 'inapp_support',       label: 'Răspunsuri suport',         desc: 'Răspunsuri la tichetele tale de suport' },
+                      ].map((item) => (
+                        <div key={item.key} className="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
+                          <div>
+                            <p className="text-sm font-medium text-gray-700">{item.label}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">{item.desc}</p>
+                          </div>
+                          <button
+                            onClick={() => toggleNotif(item.key)}
+                            className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ml-4 ${notifSettings[item.key] ? 'bg-blue-600' : 'bg-gray-200'}`}
+                          >
+                            <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 shadow transition-transform ${notifSettings[item.key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* EMAIL */}
+                  <div>
+                    <div className="mb-4">
+                      <h3 className="font-bold text-gray-800">Email</h3>
+                      <p className="text-xs text-gray-400 mt-0.5">Trimis pe adresa <span className="font-medium text-gray-500">{profile?.email}</span></p>
+                    </div>
+                    <div className="space-y-1">
+                      {[
+                        { key: 'email_offers',        label: 'Oferte la taskuri',         desc: 'Email când primești o ofertă nouă de la un meșter' },
+                        { key: 'email_task_updates',  label: 'Actualizări importante task', desc: 'Finalizare, întârziere sau task atribuit meșterului' },
+                        { key: 'email_bookings',      label: 'Rezervări și confirmări',   desc: 'Confirmare și actualizări pentru rezervările tale' },
+                      ].map((item) => (
+                        <div key={item.key} className="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
+                          <div>
+                            <p className="text-sm font-medium text-gray-700">{item.label}</p>
+                            <p className="text-xs text-gray-400 mt-0.5">{item.desc}</p>
+                          </div>
+                          <button
+                            onClick={() => toggleNotif(item.key)}
+                            className={`w-11 h-6 rounded-full relative transition-colors flex-shrink-0 ml-4 ${notifSettings[item.key] ? 'bg-blue-600' : 'bg-gray-200'}`}
+                          >
+                            <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 shadow transition-transform ${notifSettings[item.key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                 </div>
               </div>
             )}
@@ -534,32 +662,59 @@ export default function ClientProfile() {
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
                 <div className="p-6 border-b border-gray-100">
                   <h2 className="text-lg font-bold text-gray-800">Voucherele Mele</h2>
-                  <p className="text-sm text-gray-500">{mockVouchers.filter(v => !v.used).length} vouchere active</p>
+                  <p className="text-sm text-gray-500">{mockVouchers.filter(v => !v.used).length} active · {mockVouchers.filter(v => v.used).length} folosite</p>
                 </div>
+
+                {/* Input adaugare voucher */}
+                <div className="px-6 pt-5 pb-2">
+                  <div className="flex gap-2">
+                    <input type="text" placeholder="Introdu codul de voucher..."
+                      className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase placeholder:normal-case" />
+                    <button className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition">
+                      Aplică
+                    </button>
+                  </div>
+                </div>
+
                 <div className="p-6 space-y-3">
                   {mockVouchers.map((v) => (
-                    <div key={v.id} className={`flex items-center justify-between p-4 rounded-xl border-2 border-dashed
-                      ${v.used ? 'border-gray-200 bg-gray-50 opacity-60' : 'border-blue-300 bg-blue-50'}
-                    `}>
-                      <div className="flex items-center gap-4">
-                        <div className={`w-14 h-14 rounded-xl flex items-center justify-center font-bold text-lg
-                          ${v.used ? 'bg-gray-200 text-gray-500' : 'bg-blue-600 text-white'}
-                        `}>
-                          {v.discount}
+                    <div key={v.id} className={`relative overflow-hidden rounded-2xl border transition
+                      ${v.used ? 'border-gray-200 bg-gray-50' : 'border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50'}`}>
+                      <div className="flex items-center gap-4 p-4">
+                        {/* Discount badge */}
+                        <div className={`w-16 h-16 rounded-xl flex flex-col items-center justify-center font-bold flex-shrink-0
+                          ${v.used ? 'bg-gray-200 text-gray-400' : 'bg-blue-600 text-white shadow-lg shadow-blue-200'}`}>
+                          <span className="text-lg leading-none">{v.discount.replace(' RON', '')}</span>
+                          {v.discount.includes('RON') && <span className="text-xs font-normal opacity-80">RON</span>}
                         </div>
-                        <div>
-                          <p className="font-bold text-gray-800">{v.code}</p>
-                          <p className="text-sm text-gray-500">{v.description}</p>
-                          <p className="text-xs text-gray-400 mt-0.5">Expiră: {new Date(v.expires).toLocaleDateString('ro-RO')}</p>
+
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <p className={`font-bold tracking-widest text-sm font-mono ${v.used ? 'text-gray-400' : 'text-gray-800'}`}>
+                              {v.code}
+                            </p>
+                            {v.used && <span className="px-2 py-0.5 bg-gray-200 text-gray-500 text-xs rounded-full font-medium">Folosit</span>}
+                            {!v.used && new Date(v.expires) < new Date() && <span className="px-2 py-0.5 bg-red-100 text-red-500 text-xs rounded-full font-medium">Expirat</span>}
+                            {!v.used && new Date(v.expires) >= new Date() && <span className="px-2 py-0.5 bg-green-100 text-green-600 text-xs rounded-full font-medium">Activ</span>}
+                          </div>
+                          <p className={`text-sm ${v.used ? 'text-gray-400' : 'text-gray-600'}`}>{v.description}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            Expiră {new Date(v.expires).toLocaleDateString('ro-RO', { day: 'numeric', month: 'long', year: 'numeric' })}
+                          </p>
                         </div>
+
+                        {/* Action */}
+                        {!v.used && new Date(v.expires) >= new Date() && (
+                          <button className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition shadow-sm flex-shrink-0">
+                            Folosește
+                          </button>
+                        )}
                       </div>
-                      {v.used ? (
-                        <span className="px-3 py-1 bg-gray-200 text-gray-500 text-xs rounded-full font-medium">Folosit</span>
-                      ) : (
-                        <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition">
-                          Folosește
-                        </button>
-                      )}
+
+                      {/* Decorative circles (ticket effect) */}
+                      <div className={`absolute left-[72px] -top-3 w-6 h-6 rounded-full ${v.used ? 'bg-gray-100' : 'bg-white'} border ${v.used ? 'border-gray-200' : 'border-blue-100'}`} />
+                      <div className={`absolute left-[72px] -bottom-3 w-6 h-6 rounded-full ${v.used ? 'bg-gray-100' : 'bg-white'} border ${v.used ? 'border-gray-200' : 'border-blue-100'}`} />
                     </div>
                   ))}
                 </div>
@@ -572,37 +727,113 @@ export default function ClientProfile() {
                 <div className="flex items-center justify-between p-6 border-b border-gray-100">
                   <div>
                     <h2 className="text-lg font-bold text-gray-800">Cardurile Mele</h2>
-                    <p className="text-sm text-gray-500">Gestionează metodele de plată</p>
+                    <p className="text-sm text-gray-500">{cards.length} card{cards.length !== 1 ? 'uri' : ''} salvat{cards.length !== 1 ? 'e' : ''}</p>
                   </div>
-                  <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition">
+                  <button onClick={() => setShowAddCard(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition">
                     <Plus className="w-4 h-4" /> Adaugă Card
                   </button>
                 </div>
                 <div className="p-6 space-y-3">
-                  {mockCards.map((card) => (
-                    <div key={card.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
+                  {cards.length === 0 ? (
+                    <div className="text-center py-10">
+                      <CreditCard className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                      <p className="text-gray-500 font-medium">Niciun card salvat</p>
+                      <p className="text-sm text-gray-400 mt-1">Adaugă un card pentru plăți rapide</p>
+                    </div>
+                  ) : cards.map((card) => (
+                    <div key={card.id} className={`flex items-center justify-between p-4 rounded-xl border-2 transition
+                      ${card.is_primary ? 'border-blue-200 bg-blue-50' : 'border-gray-100 bg-gray-50'}`}>
                       <div className="flex items-center gap-4">
                         <div className={`w-14 h-10 rounded-lg flex items-center justify-center text-white font-bold text-xs
-                          ${card.type === 'visa' ? 'bg-blue-700' : 'bg-orange-500'}
-                        `}>
-                          {card.type === 'visa' ? 'VISA' : 'MC'}
+                          ${card.card_type === 'visa' ? 'bg-blue-700' : card.card_type === 'mastercard' ? 'bg-orange-500' : 'bg-gray-600'}`}>
+                          {card.card_type === 'visa' ? 'VISA' : card.card_type === 'mastercard' ? 'MC' : 'CARD'}
                         </div>
                         <div>
                           <p className="font-medium text-gray-800">•••• •••• •••• {card.last4}</p>
-                          <p className="text-xs text-gray-500">Expiră {card.expiry}</p>
+                          {card.cardholder_name && <p className="text-xs text-gray-600">{card.cardholder_name}</p>}
+                          <p className="text-xs text-gray-400">Expiră {card.expiry}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {card.isDefault && (
-                          <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-medium">Principal</span>
-                        )}
-                        <button className="w-8 h-8 rounded-lg hover:bg-gray-200 flex items-center justify-center transition">
-                          <Trash2 className="w-4 h-4 text-gray-400" />
+                        {card.is_primary
+                          ? <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full font-medium">Principal</span>
+                          : <button onClick={() => setPrimaryCard(card.id)}
+                              className="px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-100 rounded-lg transition">
+                              Setează principal
+                            </button>
+                        }
+                        <button onClick={() => deleteCard(card.id)}
+                          className="w-8 h-8 rounded-lg hover:bg-red-100 flex items-center justify-center transition">
+                          <Trash2 className="w-4 h-4 text-gray-400 hover:text-red-500" />
                         </button>
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {/* Modal Adaugă Card */}
+                {showAddCard && (
+                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4" onClick={() => setShowAddCard(false)}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-between p-6 border-b border-gray-100">
+                        <h3 className="text-lg font-bold text-gray-800">Adaugă Card</h3>
+                        <button onClick={() => setShowAddCard(false)} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+                          <X className="w-5 h-5 text-gray-400" />
+                        </button>
+                      </div>
+                      <div className="p-6 space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Titular card *</label>
+                          <input type="text" placeholder="Nume Prenume"
+                            value={newCard.cardholderName}
+                            onChange={e => setNewCard(p => ({ ...p, cardholderName: e.target.value }))}
+                            className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Număr card *</label>
+                          <input type="text" placeholder="0000 0000 0000 0000" maxLength={19}
+                            value={newCard.cardNumber}
+                            onChange={e => setNewCard(p => ({ ...p, cardNumber: formatCardNumber(e.target.value) }))}
+                            className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono tracking-widest" />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Data expirare *</label>
+                            <input type="text" placeholder="MM/YY" maxLength={5}
+                              value={newCard.expiry}
+                              onChange={e => {
+                                let v = e.target.value.replace(/\D/g, '').slice(0, 4)
+                                if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2)
+                                setNewCard(p => ({ ...p, expiry: v }))
+                              }}
+                              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">CVV *</label>
+                            <input type="password" placeholder="•••" maxLength={4}
+                              value={newCard.cvv}
+                              onChange={e => setNewCard(p => ({ ...p, cvv: e.target.value.replace(/\D/g, '') }))}
+                              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-400 flex items-center gap-1">
+                          <Shield className="w-3 h-3" /> Datele cardului sunt stocate securizat
+                        </p>
+                      </div>
+                      <div className="flex justify-end gap-3 p-6 border-t border-gray-100">
+                        <button onClick={() => setShowAddCard(false)}
+                          className="px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+                          Anulează
+                        </button>
+                        <button onClick={handleAddCard} disabled={addCardLoading || newCard.cardNumber.replace(/\s/g,'').length < 13 || !newCard.expiry || !newCard.cardholderName}
+                          className="px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50">
+                          {addCardLoading ? 'Se adaugă...' : 'Adaugă Card'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -967,47 +1198,110 @@ export default function ClientProfile() {
             {/* DATE FACTURARE */}
             {activeSection === 'billing' && (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
-                <div className="p-6 border-b border-gray-100">
-                  <h2 className="text-lg font-bold text-gray-800">Date Facturare</h2>
-                  <p className="text-sm text-gray-500">Informații pentru emiterea facturilor</p>
+                <div className="flex items-center justify-between p-6 border-b border-gray-100">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-800">Date Facturare</h2>
+                    <p className="text-sm text-gray-500">Informații pentru emiterea facturilor fiscale</p>
+                  </div>
+                  {billingSaved && (
+                    <span className="flex items-center gap-1.5 text-sm text-green-600 font-medium">
+                      <CheckCircle className="w-4 h-4" /> Salvat
+                    </span>
+                  )}
                 </div>
                 <div className="p-6 space-y-5">
-                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
-                    <p className="text-sm text-yellow-700">
-                      Completează datele de facturare dacă ai nevoie de factură fiscală pentru lucrări.
-                    </p>
+                  {/* Toggle PF / PJ */}
+                  <div className="flex bg-gray-100 rounded-xl p-1 w-fit">
+                    <button onClick={() => setBillingType('individual')}
+                      className={`px-5 py-2 text-sm font-medium rounded-lg transition
+                        ${billingType === 'individual' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                      Persoană Fizică
+                    </button>
+                    <button onClick={() => setBillingType('company')}
+                      className={`px-5 py-2 text-sm font-medium rounded-lg transition
+                        ${billingType === 'company' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                      Persoană Juridică
+                    </button>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Nume / Denumire Firmă</label>
-                      <input type="text" placeholder="Nume complet sau firmă"
-                        className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+
+                  {billingType === 'individual' ? (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Nume complet *</label>
+                        <input type="text" placeholder="Nume Prenume"
+                          value={billingData.individual.full_name}
+                          onChange={e => setBillingData(p => ({ ...p, individual: { ...p.individual, full_name: e.target.value } }))}
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">CNP</label>
+                        <input type="text" placeholder="1234567890123" maxLength={13}
+                          value={billingData.individual.cnp}
+                          onChange={e => setBillingData(p => ({ ...p, individual: { ...p.individual, cnp: e.target.value.replace(/\D/g, '') } }))}
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Adresă facturare *</label>
+                        <input type="text" placeholder="Str. Exemplu nr. 1, oraș, județ"
+                          value={billingData.individual.address}
+                          onChange={e => setBillingData(p => ({ ...p, individual: { ...p.individual, address: e.target.value } }))}
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">CUI / CNP</label>
-                      <input type="text" placeholder="CUI firmă sau CNP"
-                        className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Denumire Firmă *</label>
+                          <input type="text" placeholder="S.C. Exemplu S.R.L."
+                            value={billingData.company.company_name}
+                            onChange={e => setBillingData(p => ({ ...p, company: { ...p.company, company_name: e.target.value } }))}
+                            className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">CUI *</label>
+                          <input type="text" placeholder="RO12345678"
+                            value={billingData.company.cui}
+                            onChange={e => setBillingData(p => ({ ...p, company: { ...p.company, cui: e.target.value } }))}
+                            className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Adresă sediu *</label>
+                        <input type="text" placeholder="Str. Exemplu nr. 1, oraș, județ"
+                          value={billingData.company.address}
+                          onChange={e => setBillingData(p => ({ ...p, company: { ...p.company, address: e.target.value } }))}
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Registrul Comerțului</label>
+                          <input type="text" placeholder="J00/000/0000"
+                            value={billingData.company.reg_commerce}
+                            onChange={e => setBillingData(p => ({ ...p, company: { ...p.company, reg_commerce: e.target.value } }))}
+                            className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">IBAN</label>
+                          <input type="text" placeholder="RO00XXXX..."
+                            value={billingData.company.iban}
+                            onChange={e => setBillingData(p => ({ ...p, company: { ...p.company, iban: e.target.value } }))}
+                            className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Bancă</label>
+                        <input type="text" placeholder="Banca Transilvania, BRD, ING..."
+                          value={billingData.company.bank}
+                          onChange={e => setBillingData(p => ({ ...p, company: { ...p.company, bank: e.target.value } }))}
+                          className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Adresă Facturare</label>
-                    <input type="text" placeholder="Adresa completă pentru factură"
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Registrul Comerțului</label>
-                      <input type="text" placeholder="J00/000/0000"
-                        className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Cont Bancar (IBAN)</label>
-                      <input type="text" placeholder="RO00XXXX..."
-                        className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    </div>
-                  </div>
-                  <button className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 transition">
-                    Salvează Datele
+                  )}
+
+                  <button onClick={saveBilling}
+                    className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-medium text-sm hover:bg-blue-700 transition">
+                    <CheckCircle className="w-4 h-4" /> Salvează Datele
                   </button>
                 </div>
               </div>
