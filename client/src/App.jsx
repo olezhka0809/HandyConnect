@@ -18,6 +18,7 @@ import HandymanJobs from './pages/HandymanJobs'
 import HandymanReviews from './pages/HandymanReviews'
 import HandymanServices from './pages/HandymanServices'
 import ClientProfile from './pages/ClientProfile'
+import ClientFinances from './pages/ClientFinances'
 import HandymanFeed from './pages/HandymanFeed'
 import HandymanPersonalProfile from './pages/HandymanPersonalProfile'
 import HandymanMyProfile from './pages/HandymanMyProfile'
@@ -51,6 +52,7 @@ function App() {
         <Route path="/post-task" element={<ProtectedRoute allowedRoles={['client']}><PostTask /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute allowedRoles={['client']}><ClientProfile /></ProtectedRoute>} />
         <Route path="/messages" element={<ProtectedRoute allowedRoles={['client']}><Messages /></ProtectedRoute>} />
+        <Route path="/finances" element={<ProtectedRoute allowedRoles={['client']}><ClientFinances /></ProtectedRoute>} />
 
         <Route path="/handyman-onboarding" element={<ProtectedRoute allowedRoles={['handyman']} requireOnboarding={false}><HandymanOnboarding /></ProtectedRoute>} />
         <Route path="/handyman/dashboard" element={<ProtectedRoute allowedRoles={['handyman']}><HandymanDashboard /></ProtectedRoute>} />

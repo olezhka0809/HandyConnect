@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Home, Search, AlertCircle, MessageSquare, Bell, LogOut } from 'lucide-react'
+import { Home, Search, AlertCircle, MessageSquare, Bell, LogOut, Wallet } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { supabase } from '../../supabase'
 import logo from '../../assets/Logo_pin.png'
@@ -8,6 +8,7 @@ import NotificationPanel from '../NotificationPanel'
 const navLinks = [
   { path: '/dashboard', label: 'Dashboard', icon: Home },
   { path: '/find-services', label: 'Caută Servicii', icon: Search },
+  { path: '/finances', label: 'Finanțe', icon: Wallet },
   { path: '/issues', label: 'Probleme', icon: AlertCircle },
 ]
 
