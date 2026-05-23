@@ -19,6 +19,7 @@ import HandymanReviews from './pages/HandymanReviews'
 import HandymanServices from './pages/HandymanServices'
 import ClientProfile from './pages/ClientProfile'
 import ClientFinances from './pages/ClientFinances'
+import ResetPassword from './pages/ResetPassword'
 import HandymanFeed from './pages/HandymanFeed'
 import HandymanPersonalProfile from './pages/HandymanPersonalProfile'
 import HandymanMyProfile from './pages/HandymanMyProfile'
@@ -44,6 +45,7 @@ function App() {
         </Route>
 
         {/* Pagini FĂRĂ navbar + footer */}
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/onboarding" element={<ProtectedRoute allowedRoles={['client']} requireOnboarding={false}><Onboarding /></ProtectedRoute>} />
         <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['client']}><ClientDashboard /></ProtectedRoute>} />
         <Route path="/find-services" element={<ProtectedRoute allowedRoles={['client']}><FindServices /></ProtectedRoute>} />
