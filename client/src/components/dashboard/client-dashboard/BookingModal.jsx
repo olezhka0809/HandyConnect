@@ -27,7 +27,6 @@ const PAYMENT_OPTIONS = [
   { value: 'card',   label: 'Card la finalizare', Icon: CreditCard },
 ]
 
-const SERVICE_FEE_RATE = 0.08 // 8%
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -225,9 +224,9 @@ export default function BookingModal({ service, handyman, userId, onClose, onSuc
   }, [userId])
 
   // ── pricing ────────────────────────────────────────────────────────────────
-  const subtotal   = Number(service.base_price ?? 0)
-  const serviceFee = Math.round(subtotal * SERVICE_FEE_RATE * 100) / 100
-  const total      = subtotal + serviceFee
+  const total       = Number(service.base_price ?? 0)
+  const tva         = Math.round(total * 0.21 / 1.21 * 100) / 100
+  const pretFaraTva = Math.round(total / 1.21 * 100) / 100
 
   // ── validation ─────────────────────────────────────────────────────────────
   const step1Valid = date && time
@@ -252,8 +251,6 @@ export default function BookingModal({ service, handyman, userId, onClose, onSuc
           contact_name:   contactName,
           contact_phone:  phone,
           contact_email:  email || null,
-          subtotal:       subtotal,
-          service_fee:    serviceFee,
           total:          total,
           payment_method: payment,
           payment_status: 'pending',
@@ -357,7 +354,7 @@ export default function BookingModal({ service, handyman, userId, onClose, onSuc
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <p className="font-black text-blue-700">{fmtRON(subtotal)}</p>
+                  <p className="font-black text-blue-700">{fmtRON(total)}</p>
                   {service.price_per_hour && (
                     <p className="text-[10px] text-purple-500 font-semibold">{fmtRON(service.price_per_hour)}/h</p>
                   )}
@@ -651,12 +648,12 @@ export default function BookingModal({ service, handyman, userId, onClose, onSuc
               <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
                 <div className="p-4 space-y-2 text-sm">
                   <div className="flex justify-between text-gray-600">
-                    <span>Preț serviciu</span>
-                    <span className="font-semibold text-gray-800">{fmtRON(subtotal)}</span>
+                    <span>Preț fără TVA</span>
+                    <span className="font-semibold text-gray-800">{fmtRON(pretFaraTva)}</span>
                   </div>
                   <div className="flex justify-between text-gray-500">
-                    <span>Comision platformă (8%)</span>
-                    <span>{fmtRON(serviceFee)}</span>
+                    <span>TVA (21%)</span>
+                    <span>{fmtRON(tva)}</span>
                   </div>
                   <div className="border-t border-gray-100 pt-2 mt-2 flex justify-between font-black text-base">
                     <span>Total</span>

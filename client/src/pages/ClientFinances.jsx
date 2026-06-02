@@ -141,8 +141,8 @@ export default function ClientFinances() {
     const d = new Date(tx.date)
     const invoiceNo = `HC-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}-${tx.id.slice(0, 6).toUpperCase()}`
     const dateStr = d.toLocaleDateString('ro-RO')
-    const tva = (tx.amount * 0.19 / 1.19).toFixed(2)
-    const subtotalVal = (tx.amount / 1.19).toFixed(2)
+    const tva = (tx.amount * 0.21 / 1.21).toFixed(2)
+    const subtotalVal = (tx.amount / 1.21).toFixed(2)
     const payment = getPaymentDisplay(tx)
 
     const clientBlock = invoiceType === 'individual'
@@ -187,7 +187,7 @@ td{padding:12px;border-bottom:1px solid #f3f4f6;vertical-align:top}
   <div class="party"><h3>Beneficiar — ${invoiceType === 'individual' ? 'Persoană Fizică' : 'Persoană Juridică'}</h3>${clientBlock}</div>
 </div>
 <table>
-  <thead><tr><th>Descriere serviciu</th><th>U.M.</th><th style="text-align:right">Preț fără TVA</th><th style="text-align:right">TVA 19%</th><th style="text-align:right">Total</th></tr></thead>
+  <thead><tr><th>Descriere serviciu</th><th>U.M.</th><th style="text-align:right">Preț fără TVA</th><th style="text-align:right">TVA 21%</th><th style="text-align:right">Total</th></tr></thead>
   <tbody>
     <tr>
       <td><strong>${tx.title}</strong><br><span style="color:#6b7280;font-size:12px">${tx.category} · Finalizat ${dateStr}</span></td>
