@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import HandymanNavbar from '../components/handyman-dashboard/HandymanNavbar'
+import ProfileChecklist from '../components/handyman/ProfileChecklist'
 import {
   Edit3, Save, X, Star, MapPin, CheckCircle, Shield,
   Award, Briefcase, Camera, Plus, Loader2,
   ToggleLeft, ToggleRight, MessageSquare, Wrench, XCircle,
-  Zap, RotateCcw, Globe, ChevronDown, ChevronUp, Clock, Sparkles
+  Zap, RotateCcw, Globe, Clock, Sparkles
 } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
@@ -41,45 +42,6 @@ function StatBadge({ icon:Icon, value, label, color='blue' }) {
   )
 }
 
-// ── collapsible completion widget ─────────────────────────────────────────────
-function CompletionWidget({ checks }) {
-  const [open, setOpen] = useState(false)
-  const done = checks.filter(c=>c.done).length
-  const pct  = Math.round((done/checks.length)*100)
-  const barColor  = pct===100?'bg-green-500':pct>=60?'bg-blue-500':'bg-orange-400'
-  const textColor = pct===100?'text-green-600':pct>=60?'text-blue-600':'text-orange-500'
-  return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-      <button onClick={()=>setOpen(o=>!o)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-bold text-gray-600">Completitudine profil</span>
-            <span className={`text-xs font-black ${textColor}`}>{pct}%</span>
-          </div>
-          <div className="w-full bg-gray-100 rounded-full h-1.5">
-            <div className={`h-1.5 rounded-full transition-all ${barColor}`} style={{width:`${pct}%`}}/>
-          </div>
-        </div>
-        <div className="text-gray-400 flex-shrink-0">
-          {open ? <ChevronUp className="w-4 h-4"/> : <ChevronDown className="w-4 h-4"/>}
-        </div>
-      </button>
-      {open && (
-        <div className="px-4 pb-4 space-y-1.5 border-t border-gray-100 pt-3">
-          {checks.map((c,i)=>(
-            <div key={i} className="flex items-center gap-2 text-xs">
-              <div className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${c.done?'bg-green-100 text-green-600':'bg-gray-100 text-gray-400'}`}>
-                {c.done ? <CheckCircle className="w-3 h-3"/> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300"/>}
-              </div>
-              <span className={c.done?'text-gray-600':'text-gray-400'}>{c.label}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function HandymanMyProfile() {
@@ -244,16 +206,6 @@ export default function HandymanMyProfile() {
   const specialties = profile?.specialties ?? []
   const availDays   = profile?.available_days ?? []
   const isAvailable = profile?.is_available ?? false
-
-  const completionChecks = [
-    { label:'Bio adăugat',            done:!!profile?.bio },
-    { label:'Fotografie profil',      done:!!avatarUrl },
-    { label:'Tarif completat',        done:!!profile?.hourly_rate },
-    { label:'Localitate setată',      done:!!profile?.primary_city },
-    { label:'Specialități adăugate',  done:specialties.length>0 },
-    { label:'Disponibilitate setată', done:availDays.length>0 },
-    { label:'Serviciu activ',         done:services.length>0 },
-  ]
 
   const tabs = [
     { id:'servicii',        label:'Servicii' },
@@ -553,7 +505,9 @@ export default function HandymanMyProfile() {
               )}
             </div>
 
-            <CompletionWidget checks={completionChecks}/>
+            {userId && (
+              <ProfileChecklist userId={userId} compact />
+            )}
 
             {/* ── TABS ── */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
