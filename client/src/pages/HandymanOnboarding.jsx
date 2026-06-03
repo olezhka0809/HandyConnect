@@ -17,11 +17,6 @@ const experienceLevels = [
   { value: 'expert', label: 'Expert (10+ ani)' },
 ]
 
-const serviceOptions = [
-  'Reparații Generale', 'Tâmplărie', 'Instalații Electrice',
-  'Instalații Sanitare', 'Montaj Mobilă', 'Zugrăveli & Vopsitorie',
-  'Montaj/Asamblare', 'Grădinărit',
-]
 
 const workRadiusOptions = [
   'Sub 5 km', 'Sub 10 km', 'Sub 15 km', 'Sub 25 km', 'Sub 50 km', 'Peste 50 km'
@@ -34,6 +29,13 @@ export default function HandymanOnboarding() {
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [user, setUser] = useState(null)
+  const [dbSkills, setDbSkills] = useState([])
+
+  const RISK_BADGE = {
+    low:    { label: 'Scăzut',  cls: 'bg-green-100 text-green-700 border-green-200' },
+    medium: { label: 'Mediu',   cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+    high:   { label: 'Ridicat', cls: 'bg-red-100 text-red-700 border-red-200' },
+  }
 
   const [form, setForm] = useState({
     firstName: '',
@@ -61,25 +63,55 @@ export default function HandymanOnboarding() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { navigate('/login'); return }
       setUser(user)
+
+      const [profileRes, hpRes, skillsRes, userSkillsRes] = await Promise.all([
+        supabase.from('profiles').select('first_name, last_name, phone, city, county, onboarding_completed').eq('id', user.id).single(),
+        supabase.from('handyman_profiles').select('experience_years, specialties, bio, work_radius, certifications, has_insurance, background_check_consent, onboarding_step').eq('user_id', user.id).maybeSingle(),
+        supabase.from('skills').select('id, name, category, risk_level, requires_certificate').eq('is_active', true).order('category').order('name'),
+        supabase.from('user_skills').select('skill_id').eq('user_id', user.id),
+      ])
+
+      if (profileRes.data?.onboarding_completed) { navigate('/handyman/dashboard'); return }
+
+      const p  = profileRes.data
+      const hp = hpRes.data
+
+      const savedStep = hp?.onboarding_step ?? 0
+      if (savedStep > 0) setStep(Math.min(savedStep + 1, 5))
+
       setForm(prev => ({
         ...prev,
-        firstName: user.user_metadata?.first_name || '',
-        lastName: user.user_metadata?.last_name || '',
-        email: user.email || '',
-        phone: user.user_metadata?.phone || '',
+        firstName:        p?.first_name  || user.user_metadata?.first_name || '',
+        lastName:         p?.last_name   || user.user_metadata?.last_name  || '',
+        email:            user.email     || '',
+        phone:            p?.phone       || user.user_metadata?.phone      || '',
+        city:             p?.city        || '',
+        county:           p?.county      || '',
+        experience:       (() => {
+          const inv = { 0:'entry', 2:'junior', 4:'mid', 7:'senior', 12:'expert' }
+          return inv[hp?.experience_years] || ''
+        })(),
+        services:         userSkillsRes.data?.map(us => us.skill_id) || [],
+        bio:              hp?.bio               || '',
+        workRadius:       hp?.work_radius       || 'Sub 15 km',
+        certifications:   hp?.certifications    || '',
+        hasInsurance:     hp?.has_insurance              ?? false,
+        consentBackground: hp?.background_check_consent ?? false,
       }))
+
+      if (skillsRes.data) setDbSkills(skillsRes.data)
     }
     init()
   }, [navigate])
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }))
 
-  const toggleService = (service) => {
+  const toggleService = (skillId) => {
     setForm(prev => ({
       ...prev,
-      services: prev.services.includes(service)
-        ? prev.services.filter(s => s !== service)
-        : [...prev.services, service]
+      services: prev.services.includes(skillId)
+        ? prev.services.filter(id => id !== skillId)
+        : [...prev.services, skillId]
     }))
   }
 
@@ -109,9 +141,13 @@ export default function HandymanOnboarding() {
       county: form.county,
     }).eq('id', user.id)
 
+    const EXP_YEARS = { entry: 0, junior: 2, mid: 4, senior: 7, expert: 12 }
+    const expYears = EXP_YEARS[form.experience] ?? null
+
     await supabase.from('handyman_profiles').update({
-      experience_years: form.experience,
-    }).eq('id', user.id)
+      ...(expYears !== null && { experience_years: expYears }),
+      onboarding_step: 1,
+    }).eq('user_id', user.id)
 
     setLoading(false)
     setStep(2)
@@ -119,9 +155,24 @@ export default function HandymanOnboarding() {
 
   const saveStep2 = async () => {
     setLoading(true)
+
+    const { data: existing } = await supabase
+      .from('user_skills').select('skill_id').eq('user_id', user.id)
+    const existingIds = new Set(existing?.map(s => s.skill_id) || [])
+    const newIds = form.services.filter(id => !existingIds.has(id))
+
+    if (newIds.length > 0) {
+      await supabase.from('user_skills').insert(
+        newIds.map(skillId => ({ user_id: user.id, skill_id: skillId, status: 'draft' }))
+      )
+    }
+
+    const selectedNames = dbSkills.filter(s => form.services.includes(s.id)).map(s => s.name)
     await supabase.from('handyman_profiles').update({
-      specialties: form.services,
-    }).eq('id', user.id)
+      specialties: selectedNames,
+      onboarding_step: 2,
+    }).eq('user_id', user.id)
+
     setLoading(false)
     setStep(3)
   }
@@ -132,21 +183,20 @@ export default function HandymanOnboarding() {
       bio: form.bio,
       work_radius: form.workRadius,
       certifications: form.certifications,
-    }).eq('id', user.id)
+      onboarding_step: 3,
+    }).eq('user_id', user.id)
     setLoading(false)
     setStep(4)
   }
 
   const saveStep4 = async () => {
     setLoading(true)
-    // Salvează programul în handyman_schedule
     await supabase.from('handyman_schedule').upsert({
       handyman_id: user.id,
       schedule: form.schedule,
       travel_buffer_min: form.travelBuffer,
     }, { onConflict: 'handyman_id' })
 
-    // Salvează zilele active și preferințele în profil
     const activeDays = Object.entries(form.schedule)
       .filter(([, slots]) => slots.length > 0)
       .map(([day]) => day)
@@ -154,41 +204,48 @@ export default function HandymanOnboarding() {
       available_days: activeDays,
       has_insurance: form.hasInsurance,
       background_check_consent: form.consentBackground,
+      onboarding_step: 4,
     }).eq('user_id', user.id)
 
     setLoading(false)
     setStep(5)
   }
 
-  const saveStep5 = async () => {
+  const skipStep3 = async () => {
+    await supabase.from('handyman_profiles').update({ onboarding_step: 3 }).eq('user_id', user.id)
+    setStep(4)
+  }
+
+  const finishOnboarding = async (uploadPhoto = true) => {
     setLoading(true)
-    if (form.avatarFile) {
+    if (uploadPhoto && form.avatarFile) {
       const fileExt = form.avatarFile.name.split('.').pop()
       const filePath = `avatars/${user.id}.${fileExt}`
       const { error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(filePath, form.avatarFile, { upsert: true })
+        .from('avatars').upload(filePath, form.avatarFile, { upsert: true })
       if (!uploadError) {
         const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(filePath)
         await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', user.id)
       }
     }
     await supabase.from('profiles').update({ onboarding_completed: true }).eq('id', user.id)
-    await supabase.from('handyman_profiles').update({ status: 'pending_review' }).eq('id', user.id)
+    await supabase.from('handyman_profiles').update({ onboarding_step: 5 }).eq('user_id', user.id)
     setLoading(false)
-    setStep(6)
+    navigate('/handyman/dashboard')
   }
 
-  const totalSteps = 6
+  const saveStep5 = () => finishOnboarding(true)
+  const skipStep5 = () => finishOnboarding(false)
+
+  const totalSteps = 5
   const progress = (step / totalSteps) * 100
 
   const titles = {
     1: { title: 'Bine ai venit la HandyConnect!', subtitle: 'Hai să-ți configurăm profilul profesional' },
-    2: { title: 'Ce servicii oferi?', subtitle: 'Selectează specialitățile și setează-ți tarifele' },
+    2: { title: 'Ce skill-uri oferi?', subtitle: 'Selectează minim 1 skill — vei adăuga dovezi din profil' },
     3: { title: 'Povestește despre tine', subtitle: 'O biografie bună ajută clienții să te aleagă' },
     4: { title: 'Setează disponibilitatea', subtitle: 'Când ești de obicei disponibil pentru lucru?' },
     5: { title: 'Adaugă o poză de profil', subtitle: 'O poză profesională crește încrederea clienților' },
-    6: { title: 'Profil trimis!', subtitle: 'Profilul tău este în curs de verificare. Te vom notifica odată ce este aprobat.' },
   }
 
   if (!user) return null
@@ -273,32 +330,57 @@ export default function HandymanOnboarding() {
             </div>
           )}
 
-          {/* STEP 2: Services */}
+          {/* STEP 2: Skills */}
           {step === 2 && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                {serviceOptions.map((service) => (
-                  <button
-                    key={service}
-                    onClick={() => toggleService(service)}
-                    className={`flex items-center gap-3 px-4 py-3.5 rounded-xl border-2 text-left text-sm transition-all
-                      ${form.services.includes(service)
-                        ? 'border-blue-600 bg-blue-50 text-blue-600'
-                        : 'border-gray-200 text-gray-700 hover:border-blue-300'
-                      }
-                    `}
-                  >
-                    <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0
-                      ${form.services.includes(service) ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}
-                    `}>
-                      {form.services.includes(service) && <CheckCircle className="w-3 h-3 text-white" />}
-                    </div>
-                    {service}
-                  </button>
-                ))}
+            <div className="space-y-5">
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+                <strong>Notă:</strong> Skill-urile selectate vor fi în așteptare până când uploadezi dovezi din profilul tău. Până la aprobare nu poți prelua taskuri pe baza lor.
               </div>
+
+              {Object.entries(
+                dbSkills.reduce((acc, skill) => {
+                  const cat = skill.category || 'Altele'
+                  if (!acc[cat]) acc[cat] = []
+                  acc[cat].push(skill)
+                  return acc
+                }, {})
+              ).map(([category, skills]) => (
+                <div key={category}>
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{category}</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    {skills.map((skill) => {
+                      const selected = form.services.includes(skill.id)
+                      const risk = RISK_BADGE[skill.risk_level] ?? RISK_BADGE.low
+                      return (
+                        <button
+                          key={skill.id}
+                          onClick={() => toggleService(skill.id)}
+                          className={`flex flex-col gap-1.5 px-3 py-3 rounded-xl border-2 text-left text-sm transition-all
+                            ${selected ? 'border-blue-600 bg-blue-50' : 'border-gray-200 text-gray-700 hover:border-blue-300'}
+                          `}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0
+                              ${selected ? 'bg-blue-600 border-blue-600' : 'border-gray-300'}
+                            `}>
+                              {selected && <CheckCircle className="w-2.5 h-2.5 text-white" />}
+                            </div>
+                            <span className={`font-medium text-xs leading-tight ${selected ? 'text-blue-700' : 'text-gray-800'}`}>
+                              {skill.name}
+                            </span>
+                          </div>
+                          <span className={`text-xs px-2 py-0.5 rounded-full border w-fit ${risk.cls}`}>
+                            {risk.label}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+
               {form.services.length > 0 && (
-                <p className="text-sm text-blue-600 font-medium">{form.services.length} servicii selectate</p>
+                <p className="text-sm text-blue-600 font-medium">{form.services.length} skill-uri selectate</p>
               )}
             </div>
           )}
@@ -420,50 +502,11 @@ export default function HandymanOnboarding() {
             </div>
           )}
 
-          {/* STEP 6: Submitted */}
-          {step === 6 && (
-            <div className="space-y-6">
-              <div className="bg-gray-50 rounded-xl p-6">
-                <h3 className="font-bold text-gray-800 mb-4">Ce urmează?</h3>
-                <div className="space-y-4">
-                  {[
-                    { num: 1, title: 'Verificare profil (24-48 ore)', desc: 'Vom verifica informațiile și vom face verificarea de background' },
-                    { num: 2, title: 'Activare cont', desc: 'Vei primi confirmarea pe email când ești aprobat' },
-                    { num: 3, title: 'Începi să primești rezervări', desc: 'Profilul tău va fi live și clienții te vor putea găsi' },
-                  ].map((item) => (
-                    <div key={item.num} className="flex items-start gap-4">
-                      <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-sm flex-shrink-0">
-                        {item.num}
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-800">{item.title}</p>
-                        <p className="text-sm text-gray-500">{item.desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
-                <h4 className="font-bold text-blue-800 mb-2">Între timp...</h4>
-                <ul className="space-y-1.5 text-sm text-blue-700">
-                  <li>• Completează-ți profilul cu exemple de lucrări</li>
-                  <li>• Configurează preferințele de plată</li>
-                  <li>• Citește ghidul de succes pentru handymani</li>
-                </ul>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Navigation Buttons */}
         <div className="flex justify-between mt-6">
-          {step > 1 && step < 6 ? (
-            <button onClick={() => setStep(step - 1)}
-              className="flex items-center gap-1 px-5 py-2.5 border border-gray-200 rounded-lg text-gray-600 font-medium hover:bg-gray-50 transition">
-              <ChevronLeft className="w-4 h-4" /> Înapoi
-            </button>
-          ) : step === 6 ? (
+          {step > 1 ? (
             <button onClick={() => setStep(step - 1)}
               className="flex items-center gap-1 px-5 py-2.5 border border-gray-200 rounded-lg text-gray-600 font-medium hover:bg-gray-50 transition">
               <ChevronLeft className="w-4 h-4" /> Înapoi
@@ -472,47 +515,54 @@ export default function HandymanOnboarding() {
             <div />
           )}
 
-          {step === 1 && (
-            <button onClick={saveStep1}
-              disabled={loading || !form.firstName || !form.lastName || !form.phone || !form.city}
-              className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed ml-auto">
-              {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
-          {step === 2 && (
-            <button onClick={saveStep2}
-              disabled={loading || form.services.length === 0}
-              className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
-          {step === 3 && (
-            <button onClick={saveStep3}
-              disabled={loading}
-              className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
-          {step === 4 && (
-            <button onClick={saveStep4}
-              disabled={loading || Object.values(form.schedule).every(s => s.length === 0)}
-              className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
-          {step === 5 && (
-            <button onClick={saveStep5}
-              disabled={loading}
-              className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
-          {step === 6 && (
-            <button onClick={() => navigate('/dashboard')}
-              className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition">
-              Finalizează Configurarea
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {step === 3 && (
+              <button onClick={skipStep3} disabled={loading}
+                className="px-5 py-2.5 border border-gray-200 rounded-lg text-gray-500 text-sm font-medium hover:bg-gray-50 transition">
+                Sari peste
+              </button>
+            )}
+            {step === 5 && (
+              <button onClick={skipStep5} disabled={loading}
+                className="px-5 py-2.5 border border-gray-200 rounded-lg text-gray-500 text-sm font-medium hover:bg-gray-50 transition">
+                Sari peste
+              </button>
+            )}
+
+            {step === 1 && (
+              <button onClick={saveStep1}
+                disabled={loading || !form.firstName || !form.lastName || !form.phone || !form.city}
+                className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+            {step === 2 && (
+              <button onClick={saveStep2}
+                disabled={loading || form.services.length === 0}
+                className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+            {step === 3 && (
+              <button onClick={saveStep3} disabled={loading}
+                className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+            {step === 4 && (
+              <button onClick={saveStep4}
+                disabled={loading || Object.values(form.schedule).every(s => s.length === 0)}
+                className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                {loading ? 'Se salvează...' : 'Continuă'} <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+            {step === 5 && (
+              <button onClick={saveStep5} disabled={loading}
+                className="flex items-center gap-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                {loading ? 'Se salvează...' : 'Finalizează'} <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
 
         {step === 1 && (

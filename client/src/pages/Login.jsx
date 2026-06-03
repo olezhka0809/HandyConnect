@@ -34,7 +34,17 @@ export default function Login() {
       .select('roles(name)')
       .eq('user_id', userId)
     const userRole = roles?.[0]?.roles?.name
-    navigate(userRole === 'handyman' ? '/handyman/dashboard' : '/dashboard')
+
+    if (userRole === 'handyman') {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('onboarding_completed')
+        .eq('id', userId)
+        .single()
+      navigate(profile?.onboarding_completed ? '/handyman/dashboard' : '/handyman-onboarding')
+    } else {
+      navigate('/dashboard')
+    }
   }
 
   const handleSubmit = async (e) => {
@@ -140,13 +150,7 @@ export default function Login() {
               />
             </div>
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-sm font-medium text-gray-700">Parolă</label>
-                <button type="button" onClick={() => { setForgotMode(true); setError(''); setResetEmail(formData.email) }}
-                  className="text-xs text-blue-600 hover:underline font-medium">
-                  Ai uitat parola?
-                </button>
-              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Parolă</label>
               <input
                 type="password" name="password" value={formData.password}
                 onChange={handleChange} placeholder="••••••••"
@@ -158,6 +162,12 @@ export default function Login() {
               className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:opacity-50">
               {loading ? 'Se conectează...' : 'Intră în cont'}
             </button>
+            <div className="flex justify-end">
+              <button type="button" onClick={() => { setForgotMode(true); setError(''); setResetEmail(formData.email) }}
+                className="text-sm text-blue-600 hover:underline font-medium">
+                Ai uitat parola?
+              </button>
+            </div>
           </form>
         )}
 
