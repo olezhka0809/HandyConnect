@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../supabase'
 import HandymanNavbar from '../components/handyman-dashboard/HandymanNavbar'
+import ProfileChecklist from '../components/handyman/ProfileChecklist'
 import JobRequestModal from '../components/handyman-dashboard/JobRequestModal'
 import TaskDetailModal from '../components/handyman-dashboard/TaskDetailModal'
 import {
@@ -152,6 +153,8 @@ export default function HandymanDashboard() {
   const navigate = useNavigate()
 
   const [profile, setProfile] = useState(null)
+  const [verificationLevel, setVerificationLevel] = useState(1)
+  const [incompleteOnboarding, setIncompleteOnboarding] = useState(false)
   const [tab, setTab] = useState('overview')
   const [reloadKey, setReloadKey] = useState(0)
 
@@ -248,12 +251,24 @@ export default function HandymanDashboard() {
 
       const [profileRes, hpRes, newRequestsRes, activeRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
-        supabase.from('handyman_profiles').select('rating_avg, billing_company, billing_cui, billing_address, billing_iban, billing_bank').eq('user_id', user.id).maybeSingle(),
+        supabase.from('handyman_profiles').select('rating_avg, billing_company, billing_cui, billing_address, billing_iban, billing_bank, onboarding_step, verification_level').eq('user_id', user.id).maybeSingle(),
         supabase.from('tasks').select('id', { count: 'exact', head: true }).contains('proposed_to', [user.id]).eq('status', 'open'),
         supabase.from('tasks').select('id', { count: 'exact', head: true }).eq('handyman_id', user.id).in('status', ['in_progress', 'accepted', 'assigned']),
       ])
 
-      setProfile(profileRes.data)
+      const profileData = profileRes.data
+      const onboardingStep = hpRes.data?.onboarding_step ?? 0
+
+      if (!profileData?.onboarding_completed && onboardingStep < 2) {
+        navigate('/handyman-onboarding')
+        return
+      }
+      if (!profileData?.onboarding_completed) {
+        setIncompleteOnboarding(true)
+      }
+      setVerificationLevel(hpRes.data?.verification_level ?? 1)
+
+      setProfile(profileData)
       if (hpRes.data) {
         setBillingData({
           company_name: hpRes.data.billing_company || '',
@@ -631,19 +646,21 @@ export default function HandymanDashboard() {
           </div>
         </div>
         <table>
-          <thead><tr><th>#</th><th>Data</th><th>Descriere serviciu</th><th>Tip</th><th style="text-align:right">Sumă</th></tr></thead>
+          <thead><tr><th>#</th><th>Data</th><th>Descriere serviciu</th><th>Tip</th><th style="text-align:right">Preț fără TVA</th><th style="text-align:right">TVA 21%</th><th style="text-align:right">Total</th></tr></thead>
           <tbody>
             <tr>
               <td>1</td>
               <td>${fmtDate(row.date.toISOString())}</td>
               <td>${row.title}</td>
               <td>${row.typeLabel}</td>
+              <td style="text-align:right">${(row.amount / 1.21).toFixed(2)} RON</td>
+              <td style="text-align:right">${(row.amount * 0.21 / 1.21).toFixed(2)} RON</td>
               <td style="text-align:right;font-weight:600">${row.amount.toLocaleString('ro-RO')} RON</td>
             </tr>
           </tbody>
         </table>
         <div class="total-section">
-          <div style="font-size:13px;color:#6B7280">Total de plată</div>
+          <div style="font-size:13px;color:#6B7280">Subtotal fără TVA: ${(row.amount / 1.21).toFixed(2)} RON · TVA 21%: ${(row.amount * 0.21 / 1.21).toFixed(2)} RON</div>
           <div class="total-amount">${row.amount.toLocaleString('ro-RO')} RON</div>
         </div>
         <div class="footer">Factură generată automat prin HandyConnect · ${now}</div>
@@ -670,6 +687,12 @@ export default function HandymanDashboard() {
             Vezi Job-uri
           </Link>
         </div>
+
+        {verificationLevel < 2 && profile?.id && (
+          <div className="mb-6">
+            <ProfileChecklist userId={profile.id} compact />
+          </div>
+        )}
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           {[
