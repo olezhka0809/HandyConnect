@@ -329,6 +329,21 @@ export default function HandymanProfile() {
                   <h1 className="text-xl font-bold text-gray-800">{fullName}</h1>
                   {vLevel >= 1 && <CheckCircle className="w-5 h-5 text-blue-500" title="Identitate verificată"/>}
                   {vLevel >= 2 && <Shield className="w-5 h-5 text-green-500" title="Background verificat"/>}
+                  {vLevel >= 7 && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border bg-yellow-50 text-yellow-700 border-yellow-300">
+                      ⭐ Meșter de Top
+                    </span>
+                  )}
+                  {vLevel === 6 && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border bg-purple-50 text-purple-700 border-purple-200">
+                      Meșter Expert
+                    </span>
+                  )}
+                  {vLevel === 5 && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border bg-orange-50 text-orange-700 border-orange-200">
+                      Meșter Avansat
+                    </span>
+                  )}
                   {trustBadge && (
                     <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${trustBadge.cls}`}>
                       {trustBadge.emoji} {trustBadge.label}

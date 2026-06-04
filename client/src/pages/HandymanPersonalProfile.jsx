@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../supabase'
 import HandymanNavbar from '../components/handyman-dashboard/HandymanNavbar'
 import CityAutocomplete from '../components/CityAutocomplete'
+import ProfileChecklist from '../components/handyman/ProfileChecklist'
 import ScheduleEditor, { EMPTY_SCHEDULE } from '../components/ScheduleEditor'
 import { updateHandymanWorkZone } from '../utils/cityLookup'
 import SecuritySettings from '../components/SecuritySettings'
@@ -37,44 +38,44 @@ const VERIF_LEVELS = [
   },
   {
     level: 2, label: 'Meșter verificat',  badge: 'bg-blue-100 text-blue-700',      color: 'blue',
-    desc:  'Identitate + cazier + 1 skill scăzut aprobat',
-    requirements: ['Identitate aprobată (buletin + selfie)', 'Cazier judiciar aprobat', 'Minim 1 skill de nivel Scăzut aprobat'],
-    unlocks: ['Feed taskuri publice', 'Preluare taskuri risc scăzut'],
-    cta: 'Mergi la Verificare & Acces → încarcă documentele. Apoi adaugă un skill scăzut.',
+    desc:  'Identitate + cazier aprobate',
+    requirements: ['Identitate aprobată (buletin + selfie)', 'Cazier judiciar aprobat'],
+    unlocks: ['Feed taskuri activ', 'Taskuri din categoriile skill-urilor aprobate', 'Badge „Meșter Verificat" pe profil'],
+    cta: 'Mergi la Verificare & Acces → încarcă cartea de identitate și cazierul.',
   },
   {
     level: 3, label: 'Meșter activ',      badge: 'bg-indigo-100 text-indigo-700',   color: 'indigo',
     desc:  '5 lucrări finalizate fără incidente + scoruri bune',
     requirements: ['5 taskuri finalizate', 'Reliability > 70 (90 zile)', 'Trust score > 45', 'Max 1 no-show în istoric'],
-    unlocks: ['Profil public complet', 'Recenzii vizibile clienților'],
+    unlocks: ['Acces marketplace Relucrări (cu reliability > 70 și rating ≥ 4.0)'],
     cta: 'Finalizează primele 5 taskuri cu rating bun și fără no-show.',
   },
   {
     level: 4, label: 'Meșter experimentat', badge: 'bg-teal-100 text-teal-700',    color: 'teal',
-    desc:  '15 lucrări + skill mediu + fără dispute pierdute',
-    requirements: ['15 taskuri finalizate', '1 skill de nivel Mediu aprobat', 'Reliability > 75', 'Trust score > 55', '0 dispute pierdute'],
-    unlocks: ['Taskuri risc mediu', 'Rezervări proprii pe profil'],
-    cta: 'Adaugă un skill de nivel Mediu și atinge 15 lucrări fără dispute.',
+    desc:  '15 lucrări + fără dispute pierdute',
+    requirements: ['15 taskuri finalizate', 'Reliability > 75', 'Trust score > 55', '0 dispute pierdute'],
+    unlocks: ['Apare în secțiunea „Profesioniști Recomandați" în căutarea de servicii'],
+    cta: 'Atinge 15 lucrări fără dispute.',
   },
   {
     level: 5, label: 'Meșter avansat',    badge: 'bg-orange-100 text-orange-700',   color: 'orange',
-    desc:  '35 lucrări + skill ridicat + rating 4.2+',
-    requirements: ['35 taskuri finalizate', '1 skill Ridicat SAU 3 skilluri Medii aprobate', 'Reliability > 80', 'Trust > 65', 'Rating ≥ 4.2'],
-    unlocks: ['Taskuri risc ridicat', 'Servicii cu preț fix'],
-    cta: 'Adaugă un skill de nivel Ridicat (necesită certificat) și menține rating-ul.',
+    desc:  '35 lucrări + rating 4.2+',
+    requirements: ['35 taskuri finalizate', 'Reliability > 80', 'Trust > 65', 'Rating ≥ 4.2'],
+    unlocks: ['Badge „Meșter Avansat" pe profilul public'],
+    cta: 'Menține rating-ul ridicat și finalizează 35 de lucrări.',
   },
   {
     level: 6, label: 'Meșter expert',     badge: 'bg-purple-100 text-purple-700',   color: 'purple',
     desc:  '70 lucrări + skilluri din min. 2 categorii + rating 4.4+',
     requirements: ['70 taskuri finalizate', 'Skilluri din minim 2 niveluri de risc', 'Reliability > 85', 'Trust > 75', 'Rating ≥ 4.4', 'Activity score > 60'],
-    unlocks: ['Prioritate în feed', 'Comision redus −2%'],
+    unlocks: ['Badge „Meșter Expert" pe profilul public'],
     cta: 'Continuă să fii activ și diversifică skillurile pe categorii diferite.',
   },
   {
     level: 7, label: 'Meșter de Top ⭐',  badge: 'bg-yellow-100 text-yellow-700',   color: 'yellow',
     desc:  '120 lucrări + toate cele 3 niveluri de risc + rating 4.6+',
     requirements: ['120 taskuri finalizate', 'Skilluri din toate 3 nivelurile de risc', 'Reliability > 90', 'Trust > 85', 'Rating ≥ 4.6', 'Activity > 70'],
-    unlocks: ['Badge premium „Meșter de Top"', 'Comision redus −5%', 'Promovat în feed'],
+    unlocks: ['Badge „⭐ Meșter de Top" pe profilul public'],
     cta: 'Cel mai înalt nivel — continui să excelezi!',
   },
 ]
@@ -137,9 +138,10 @@ function RiskBadge({ level }) {
 
 function StatusBadge({ status }) {
   const map = {
-    pending:  { label: 'În verificare', cls: 'bg-yellow-100 text-yellow-700', icon: Clock },
-    approved: { label: 'Aprobat',       cls: 'bg-green-100 text-green-700',   icon: CheckCircle },
-    rejected: { label: 'Respins',       cls: 'bg-red-100 text-red-700',       icon: X },
+    draft:    { label: 'Dovadă necesară', cls: 'bg-blue-100 text-blue-700',   icon: Upload },
+    pending:  { label: 'În verificare',  cls: 'bg-yellow-100 text-yellow-700', icon: Clock },
+    approved: { label: 'Aprobat',        cls: 'bg-green-100 text-green-700',   icon: CheckCircle },
+    rejected: { label: 'Respins',        cls: 'bg-red-100 text-red-700',       icon: X },
   }
   const s = map[status]
   if (!s) return null
@@ -155,7 +157,16 @@ function StatusBadge({ status }) {
 
 export default function HandymanPersonalProfile() {
   const navigate = useNavigate()
-  const [activeSection, setActiveSection] = useState('account')
+  const location = useLocation()
+  const [activeSection, setActiveSection] = useState(
+    location.state?.section ?? 'account'
+  )
+
+  useEffect(() => {
+    if (location.state?.section) {
+      setActiveSection(location.state.section)
+    }
+  }, [location.state?.section])
   const [profile, setProfile] = useState(null)
   const [handymanProfile, setHandymanProfile] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -737,7 +748,6 @@ export default function HandymanPersonalProfile() {
       case 1: return [
         { label: 'Identitate aprobată (buletin + selfie)', met: idOk },
         { label: 'Cazier judiciar aprobat', met: legalOk },
-        { label: 'Minim 1 skill Scăzut aprobat', met: hasLow },
       ]
       case 2: return [
         { label: '5 taskuri finalizate', met: jobs >= 5, current: `${jobs}/5` },
@@ -747,14 +757,12 @@ export default function HandymanPersonalProfile() {
       ]
       case 3: return [
         { label: '15 taskuri finalizate', met: jobs >= 15, current: `${jobs}/15` },
-        { label: '1 skill Mediu aprobat', met: hasMed },
         { label: 'Fiabilitate > 75', met: reliabilityScore > 75, current: `${reliabilityScore}` },
         { label: 'Trust score > 55', met: trustScore > 55, current: `${trustScore}` },
         { label: '0 dispute pierdute', met: disputes === 0, current: `${disputes} pierdute` },
       ]
       case 4: return [
         { label: '35 taskuri finalizate', met: jobs >= 35, current: `${jobs}/35` },
-        { label: '1 skill Ridicat SAU 3 skilluri Medii', met: hasHigh || medCount >= 3, current: hasHigh ? '✓ skill ridicat' : `${medCount}/3 medii` },
         { label: 'Fiabilitate > 80', met: reliabilityScore > 80, current: `${reliabilityScore}` },
         { label: 'Trust score > 65', met: trustScore > 65, current: `${trustScore}` },
         { label: 'Rating ≥ 4.2', met: rating > 4.2, current: `${rating}★` },
@@ -782,7 +790,7 @@ export default function HandymanPersonalProfile() {
   // Skills filtering — approved skills first, then pending, then unadded
   const userSkillIds = new Set(userDbSkills.map(s => s.skill_id))
   const approvedSkillIds = new Set(userDbSkills.filter(s => s.status === 'approved').map(s => s.skill_id))
-  const pendingSkillIds  = new Set(userDbSkills.filter(s => s.status === 'pending').map(s => s.skill_id))
+  const pendingSkillIds  = new Set(userDbSkills.filter(s => s.status === 'pending' || s.status === 'draft').map(s => s.skill_id))
   const filteredDbSkills = dbSkills.filter(s => {
     const matchRisk = skillRiskFilter === 'all' || s.risk_level === skillRiskFilter
     const matchSearch = s.name.toLowerCase().includes(skillSearch.toLowerCase()) || s.category.toLowerCase().includes(skillSearch.toLowerCase())
@@ -896,6 +904,10 @@ export default function HandymanPersonalProfile() {
                 <LogOut className="w-4 h-4" /><span className="text-sm font-medium">Deconectare</span>
               </button>
             </div>
+
+            {verificationLevel < 2 && profile?.id && (
+              <ProfileChecklist userId={profile.id} compact />
+            )}
           </div>
 
           {/* ── MAIN CONTENT ── */}
