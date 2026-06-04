@@ -85,6 +85,9 @@ export default function HandymanFeed() {
   const [approvedSkills, setApprovedSkills] = useState([]) // [{skill_id, skill_score, skills:{category_id}}]
   const [categoryMode,   setCategoryMode]   = useState('mine') // 'mine' | 'all'
 
+  // Identity + cazier approval state (gates feed access)
+  const [docsApproved, setDocsApproved] = useState({ identity: false, cazier: false })
+
   // Travel fee gate modal
   const [showTravelFeeModal, setShowTravelFeeModal] = useState(false)
   const [travelFeeInput,     setTravelFeeInput]     = useState('')
@@ -108,7 +111,7 @@ export default function HandymanFeed() {
 
   useEffect(() => {
     applyFilters()
-  }, [tasks, applied, handymanProfile, approvedSkills, categoryMode])
+  }, [tasks, applied, handymanProfile, approvedSkills, categoryMode, docsApproved])
 
   // ─── LOAD DATA ───────────────────────────────────────
   async function loadData() {
@@ -176,6 +179,16 @@ export default function HandymanFeed() {
       .eq('user_id', authUser.id)
       .eq('status', 'approved')
     setApprovedSkills(skills || [])
+
+    // Verificări identitate + cazier — condiție obligatorie pentru acces feed
+    const { data: verifs } = await supabase
+      .from('verifications')
+      .select('type, status')
+      .eq('user_id', authUser.id)
+    setDocsApproved({
+      identity: verifs?.some(v => v.type === 'identity' && v.status === 'approved') ?? false,
+      cazier:   verifs?.some(v => (v.type === 'legal' || v.type === 'criminal_record') && v.status === 'approved') ?? false,
+    })
 
     // Dacă nu are zona setată → arată popup
     if (!hp?.feed_setup_completed) {
@@ -413,23 +426,18 @@ export default function HandymanFeed() {
     let result = [...tasks]
     result = result.filter(t => !t.my_offer_status)
 
-    // Risk level gate based on verification_level (7-level system)
-    // Level 1: no feed access
-    // Level 2+: low-risk tasks
-    // Level 4+: medium-risk tasks + own bookings
-    // Level 5+: high-risk tasks + fixed-price services
-    const level = handymanProfile?.verification_level ?? 1
-    if (level < 2) {
+    // Gate 1: CI + cazier obligatorii pentru orice acces la feed
+    if (!docsApproved.identity || !docsApproved.cazier) {
       setFilteredTasks([])
       return
-    } else if (level < 4) {
-      result = result.filter(t => !t.risk_level || t.risk_level === 'low')
-    } else if (level < 5) {
-      result = result.filter(t => !t.risk_level || t.risk_level === 'low' || t.risk_level === 'medium')
     }
-    // level 5+: all risk levels visible
+
+    // Gate 2: meșterul vede doar taskuri din categoriile cu skill aprobat
+    // Accesul la risc ridicat/mediu/scăzut este determinat de skill-urile aprobate, nu de nivel
+    result = result.filter(t => !t.category_id || approvedCatIds.has(t.category_id))
 
     // Rework marketplace gate: needs level >= 3, reliability_score >= 70, rating_avg >= 4.0
+    const level            = handymanProfile?.verification_level ?? 1
     const reliabilityScore = handymanProfile?.reliability_score ?? 60
     const ratingAvg        = handymanProfile?.rating_avg ?? 0
     result = result.filter(t => {
@@ -448,11 +456,7 @@ export default function HandymanFeed() {
       return score >= (t.minimum_skill_score ?? 0)
     })
 
-    // Category-mode filter: show only tasks matching approved skill categories.
-    // When no skills approved, categorized tasks are hidden in 'mine' mode.
-    if (categoryMode === 'mine') {
-      result = result.filter(t => !t.category_id || approvedCatIds.has(t.category_id))
-    }
+    // categoryMode 'mine'/'all' rămâne pentru sortare/display viitor
 
     if (applied.search) {
       const q = applied.search.toLowerCase()
@@ -822,8 +826,10 @@ export default function HandymanFeed() {
     )
   }
 
-  // ─── LEVEL-0 BLOCK ───────────────────────────────────
-  if (!loading && (handymanProfile?.verification_level ?? 0) === 0 && handymanProfile?.feed_setup_completed) {
+  // ─── DOCS NOT APPROVED BLOCK ─────────────────────────
+  if (!loading && handymanProfile?.feed_setup_completed && (!docsApproved.identity || !docsApproved.cazier)) {
+    const missingIdentity = !docsApproved.identity
+    const missingCazier   = !docsApproved.cazier
     return (
       <div className="min-h-screen bg-gray-50">
         <HandymanNavbar />
@@ -831,22 +837,22 @@ export default function HandymanFeed() {
           <div className="w-20 h-20 rounded-full bg-yellow-100 flex items-center justify-center mx-auto mb-6">
             <Lock className="w-10 h-10 text-yellow-600" />
           </div>
-          <h2 className="text-2xl font-bold text-gray-800 mb-3">Acces restricționat</h2>
+          <h2 className="text-2xl font-bold text-gray-800 mb-3">Documente de identitate necesare</h2>
           <p className="text-gray-500 mb-6 leading-relaxed">
-            Pentru a vedea taskuri disponibile trebuie să ai cel puțin <strong>Nivelul 1 de verificare</strong>.
-            Completează profilul tău de meșter și trimite cererea de verificare.
+            Pentru a accesa feed-ul de taskuri trebuie să ai identitatea și cazierul aprobate.
+            Fără aceste documente nu poți lucra cu clienții platformei.
           </p>
           <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-5 mb-8 text-left space-y-2 text-sm text-yellow-800">
-            <p className="font-semibold flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Cum obții Nivelul 1:</p>
-            <p>1. Completează profilul tău de meșter (bio, specialități, experiență)</p>
-            <p>2. Adminul aprobă profilul tău → primești <strong>Nivelul 1</strong></p>
-            <p>3. Câștigă acces la taskuri de risc scăzut (electricitate, instalații etc.)</p>
+            <p className="font-semibold flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Ce lipsește:</p>
+            {missingIdentity && <p>• Carte de identitate (față + selfie) — neaprobată</p>}
+            {missingCazier   && <p>• Cazier judiciar — neaprobat</p>}
+            <p className="text-yellow-700 pt-1">După aprobare poți prelua taskuri din categoriile skill-urilor tale verificate.</p>
           </div>
           <button
-            onClick={() => navigate('/handyman/personal-profile')}
+            onClick={() => navigate('/handyman/personal-profile', { state: { section: 'verification' } })}
             className="px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition"
           >
-            Mergi la profilul meu
+            Mergi la Verificare & Acces
           </button>
         </div>
       </div>
@@ -872,20 +878,16 @@ export default function HandymanFeed() {
                   <span className="text-yellow-600"> +{handymanProfile.extended_radius_km} km</span>
                 </span>
               )}
-              {(handymanProfile?.verification_level ?? 0) === 1 && (
+              {docsApproved.identity && docsApproved.cazier ? (
+                <span className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full border border-green-200">
+                  <ShieldCheck className="w-3 h-3" /> Identitate verificată
+                </span>
+              ) : (
                 <button
-                  onClick={() => navigate('/handyman/personal-profile')}
+                  onClick={() => navigate('/handyman/personal-profile', { state: { section: 'verification' } })}
                   className="flex items-center gap-1 text-xs bg-yellow-100 text-yellow-700 px-2.5 py-1 rounded-full border border-yellow-200 hover:bg-yellow-200 transition"
                 >
-                  <ShieldCheck className="w-3 h-3" /> Nivel 1 · Risc scăzut · Verifică-te →
-                </button>
-              )}
-              {(handymanProfile?.verification_level ?? 0) === 2 && (
-                <button
-                  onClick={() => navigate('/handyman/personal-profile')}
-                  className="flex items-center gap-1 text-xs bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full border border-blue-200 hover:bg-blue-200 transition"
-                >
-                  <ShieldCheck className="w-3 h-3" /> Nivel 2 · Risc mediu · Finalizează →
+                  <ShieldCheck className="w-3 h-3" /> Documente lipsă · Verifică-te →
                 </button>
               )}
               {approvedSkills.length === 0 && (
@@ -1418,17 +1420,11 @@ export default function HandymanFeed() {
         ) : (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center">
             <Search className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="font-bold text-gray-800 mb-2">
-              {(handymanProfile?.verification_level ?? 1) < 2
-                ? 'Feed indisponibil — Nivel 1'
-                : 'Niciun task disponibil'}
-            </h3>
+            <h3 className="font-bold text-gray-800 mb-2">Niciun task disponibil</h3>
             <p className="text-sm text-gray-500 mb-4">
-              {(handymanProfile?.verification_level ?? 1) < 2
-                ? 'Trebuie să ajungi la Nivel 2 (Meșter verificat) pentru a accesa feed-ul. Încarcă documentele de identitate + cazier și adaugă un skill de nivel scăzut.'
-                : (handymanProfile?.verification_level ?? 1) < 4
-                  ? 'Nu există taskuri de risc scăzut în zona ta. Extinde zona sau avansează la Nivel 4 pentru taskuri de risc mediu.'
-                  : 'Nu există taskuri în zona ta momentan. Încearcă să extinzi raza de căutare.'}
+              {approvedSkills.length === 0
+                ? 'Nu ai skilluri aprobate. Adaugă skilluri și trimite dovezi pentru a accesa task-urile din categoriile tale.'
+                : 'Nu există task-uri disponibile în categoriile tale din zona setată. Extinde raza de căutare sau revino mai târziu.'}
             </p>
             <button
               onClick={() => {

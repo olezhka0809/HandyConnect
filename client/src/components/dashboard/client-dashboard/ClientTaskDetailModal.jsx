@@ -222,6 +222,16 @@ function OfferCard({ offer, onAccept, onNegotiate, onDecline, accepting, readOnl
   }
   const statusCfg = statusMap[offer.status] ?? statusMap.pending
 
+  const hp = Array.isArray(offer.handyman?.handyman_profiles)
+    ? offer.handyman.handyman_profiles[0]
+    : offer.handyman?.handyman_profiles
+  const completedTasks = hp?.completed_tasks ?? 0
+  const expBadge = completedTasks === 0
+    ? { label: 'Meșter nou pe platformă', cls: 'bg-gray-100 text-gray-500' }
+    : completedTasks < 5
+      ? { label: `${completedTasks} lucr. pe platformă`, cls: 'bg-blue-50 text-blue-600' }
+      : { label: `${completedTasks} lucrări finalizate`, cls: 'bg-green-50 text-green-700' }
+
   return (
     <div className={`border rounded-xl overflow-hidden transition ${
       offer.status === 'accepted' ? 'border-green-300 bg-green-50' :
@@ -256,7 +266,10 @@ function OfferCard({ offer, onAccept, onNegotiate, onDecline, accepting, readOnl
       </div>
 
       {/* details row */}
-      <div className="px-3 pb-2 flex items-center gap-4 text-xs text-gray-500 border-t border-gray-100 pt-2">
+      <div className="px-3 pb-2 flex flex-wrap items-center gap-3 text-xs text-gray-500 border-t border-gray-100 pt-2">
+        <span className={`flex items-center gap-1 px-2 py-0.5 rounded-md font-medium ${expBadge.cls}`}>
+          <Briefcase className="w-3 h-3" /> {expBadge.label}
+        </span>
         {offer.estimated_duration && (
           <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{offer.estimated_duration}</span>
         )}
@@ -2621,7 +2634,8 @@ export default function ClientTaskDetailModal({ taskId, onClose, onUpdated }) {
           .select(`
             *,
             handyman:handyman_id (
-              first_name, last_name, avatar_url, city, average_rating
+              first_name, last_name, avatar_url, city, average_rating,
+              handyman_profiles ( completed_tasks, verification_level )
             )
           `)
           .eq('task_id', taskId)
@@ -2987,7 +3001,7 @@ export default function ClientTaskDetailModal({ taskId, onClose, onUpdated }) {
 
       // refresh
       const { data: newOffers } = await supabase.from('task_offers')
-        .select('*, handyman:handyman_id(first_name, last_name, avatar_url, city, average_rating)')
+        .select('*, handyman:handyman_id(first_name, last_name, avatar_url, city, average_rating, handyman_profiles(completed_tasks, verification_level))')
         .eq('task_id', taskId).order('created_at', { ascending: false })
       setOffers(newOffers ?? [])
       const { data: newTask } = await supabase.from('tasks').select('*, categories(id, name, icon)').eq('id', taskId).maybeSingle()
@@ -3039,7 +3053,7 @@ export default function ClientTaskDetailModal({ taskId, onClose, onUpdated }) {
       // 3. Reîncarcă ofertele
       const { data: newOffers } = await supabase
         .from('task_offers')
-        .select('*, handyman:handyman_id(first_name, last_name, avatar_url, city, average_rating)')
+        .select('*, handyman:handyman_id(first_name, last_name, avatar_url, city, average_rating, handyman_profiles(completed_tasks, verification_level))')
         .eq('task_id', taskId)
         .order('created_at', { ascending: false })
       setOffers(newOffers ?? [])

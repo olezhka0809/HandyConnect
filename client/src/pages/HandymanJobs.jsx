@@ -1183,6 +1183,8 @@ function ProposedJobCard({ job, userId, handymanName, onAccepted, onNegotiate })
 // ─── NEGOTIATIONS VIEW ────────────────────────────────────────────────────────
 
 function NegotiationsView({ negotiations, reworkProposals = [], onRefresh }) {
+  const [negFilter, setNegFilter] = useState('all')
+
   const isEmpty = negotiations.length === 0 && reworkProposals.length === 0
   if (isEmpty) return (
     <div className="text-center py-16 bg-white rounded-2xl border border-gray-100">
@@ -1192,21 +1194,60 @@ function NegotiationsView({ negotiations, reworkProposals = [], onRefresh }) {
     </div>
   )
 
+  const countByFilter = {
+    all:      negotiations.length,
+    pending:  negotiations.filter(n => n.status === 'pending' || n.status === 'negotiating').length,
+    accepted: negotiations.filter(n => n.status === 'accepted').length,
+    rejected: negotiations.filter(n => n.status === 'rejected').length,
+  }
+  const NEG_FILTERS = [
+    { id: 'all',      label: 'Toate',        cls: 'bg-gray-800 text-white',          inactiveCls: 'bg-white text-gray-600 border border-gray-200' },
+    { id: 'pending',  label: 'În așteptare', cls: 'bg-yellow-500 text-white',        inactiveCls: 'bg-white text-yellow-700 border border-yellow-200' },
+    { id: 'accepted', label: 'Acceptate',    cls: 'bg-green-600 text-white',         inactiveCls: 'bg-white text-green-700 border border-green-200' },
+    { id: 'rejected', label: 'Refuzate',     cls: 'bg-red-500 text-white',           inactiveCls: 'bg-white text-red-600 border border-red-200' },
+  ]
+
+  const visibleNegotiations = negFilter === 'all'
+    ? negotiations
+    : negFilter === 'pending'
+      ? negotiations.filter(n => n.status === 'pending' || n.status === 'negotiating')
+      : negotiations.filter(n => n.status === negFilter)
+
   return (
     <div className="space-y-8">
       {/* ── Price offer negotiations ── */}
       {negotiations.length > 0 && (
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <TrendingDown className="w-5 h-5 text-orange-500" />
             <h2 className="text-lg font-bold text-gray-800">Ofertele Tale de Preț</h2>
             <span className="px-2.5 py-0.5 bg-orange-100 text-orange-700 text-xs font-bold rounded-full">{negotiations.length} oferte</span>
           </div>
-          <div className="grid md:grid-cols-2 gap-4">
-            {negotiations.map(neg => (
-              <NegotiationCard key={neg.id} neg={neg} onRefresh={onRefresh} />
+          <div className="flex items-center gap-2 flex-wrap">
+            {NEG_FILTERS.map(f => (
+              <button
+                key={f.id}
+                onClick={() => setNegFilter(f.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${negFilter === f.id ? f.cls : f.inactiveCls}`}
+              >
+                {f.label}
+                <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold ${negFilter === f.id ? 'bg-white/20' : 'bg-gray-100 text-gray-500'}`}>
+                  {countByFilter[f.id]}
+                </span>
+              </button>
             ))}
           </div>
+          {visibleNegotiations.length === 0 ? (
+            <div className="text-center py-10 bg-white rounded-2xl border border-gray-100">
+              <p className="text-gray-400 text-sm">Nicio ofertă cu statusul selectat.</p>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 gap-4">
+              {visibleNegotiations.map(neg => (
+                <NegotiationCard key={neg.id} neg={neg} onRefresh={onRefresh} />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
