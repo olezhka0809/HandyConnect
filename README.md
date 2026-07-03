@@ -1,105 +1,126 @@
-# HandyConnect
+# HandyConnect — Platformă Marketplace pentru Servicii la Domiciliu
 
-Platformă web pentru conectarea clienților cu meșteri locali. Clienții postează task-uri, primesc oferte de la meșteri verificați și gestionează întregul ciclu al lucrării — de la negociere până la finalizare și recenzie.
+## Repository
 
----
+**https://github.com/olezhka0809/HandyConnect**
 
-## Stack tehnic
-
-| Layer | Tehnologie |
-|---|---|
-| Frontend | React 18 + Vite + Tailwind CSS |
-| Backend | Node.js + Express |
-| Bază de date | Supabase (PostgreSQL + RLS) |
-| Autentificare | Supabase Auth |
-| AI | Google Gemini API |
-| Upload fișiere | Multer + Supabase Storage |
-| Real-time | Supabase Realtime |
+Repository-ul este setat la vizibilitate publică și conține întregul cod sursă al aplicației, fără fișiere binare compilate sau fișiere de configurare cu date sensibile.
 
 ---
 
-## Funcționalități principale
+## Tehnologii utilizate
 
-**Clienți**
-- Postare task-uri cu fotografii, categorie, urgență și program preferat
-- Primire și gestionare oferte de la meșteri
-- Sistem de programare și reprogramare task-uri
-- Urmărire stare lucrare, deschidere dispute, recenzii
-
-**Meșteri**
-- Feed task-uri filtrat după zonă și nivel de skill
-- Trimitere oferte, gestionare job-uri active, marcare finalizare cu fotografii
-- Profil public cu servicii, recenzii și statistici
-- Calendar săptămânal cu blocuri automate per task
-
-**Admin**
-- Verificare identitate meșteri și certificări de skill
-- Gestionare dispute cu decizii (relucrare, rambursare, redirecționare)
-- Suport tichete, gestionare utilizatori, căutare task-uri
-
-**Platformă**
-- Chat real-time client ↔ meșter per task
-- Notificări in-app în timp real (Supabase Realtime)
-- Funcționalități AI: generare descrieri, analiză fotografii, estimare buget, checklist pași
+- **Frontend:** React 19, Vite, Tailwind CSS v4
+- **Backend:** Node.js, Express 5
+- **Bază de date:** Supabase (PostgreSQL + Auth + Realtime + Storage)
+- **AI:** Google Gemini 2.5 Flash (7 endpoint-uri)
 
 ---
 
-## Configurare locală
+## Cerințe preliminare
+
+- Node.js **v18** sau mai nou
+- npm **v9** sau mai nou
+- Un proiect Supabase activ (gratuit la [supabase.com](https://supabase.com))
+- O cheie API Google Gemini (gratuită la [aistudio.google.com](https://aistudio.google.com))
+
+---
+
+## Pași de compilare
+
+Aplicația are două componente: clientul React (compilat cu Vite) și serverul Express (rulat direct cu Node.js, fără pas de compilare).
+
+### Compilare client (React → bundle static)
 
 ```bash
-# Instalare dependențe
-cd client && npm install
-cd ../server && npm install
+cd client
+npm install
+npm run build
 ```
 
-Variabile de mediu necesare:
+Rezultatul se găsește în folderul `client/dist/` și poate fi servit de orice server HTTP static.
+
+### Server (fără compilare)
+
+Serverul este scris în CommonJS și rulează direct cu Node.js, fără un pas de build:
+
+```bash
+cd server
+npm install
+```
+
+---
+
+## Pași de instalare și lansare
+
+### 1. Clonare repository
+
+```bash
+git clone https://github.com/olezhka0809/HandyConnect.git
+cd HandyConnect
+```
+
+### 2. Instalare dependințe rădăcină
+
+```bash
+npm install
+```
+
+### 3. Configurare variabile de mediu
+
+**Pentru server** — creați fișierul `server/.env`:
 
 ```env
-# client/.env
-VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
-
-# server/.env
-GEMINI_API_KEY=
-SUPABASE_URL=
-SUPABASE_SERVICE_KEY=
+SUPABASE_URL=https://<project-id>.supabase.co
+SUPABASE_SERVICE_KEY=<service-role-key>
+GEMINI_API_KEY=<gemini-api-key>
 PORT=5000
 ```
 
+**Pentru client** — creați fișierul `client/.env`:
+
+```env
+VITE_SUPABASE_URL=https://<project-id>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=<anon-public-key>
+```
+
+Valorile `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` și `VITE_SUPABASE_PUBLISHABLE_KEY` se găsesc în panoul Supabase la **Project Settings → API**.
+
+### 4. Lansare în modul dezvoltare
+
+Comanda următoare pornește simultan serverul Express (portul 5000) și clientul Vite (portul 5173):
+
 ```bash
-# Pornire (din root — pornește client + server concurent)
 npm run dev
 ```
 
----
+Aplicația este accesibilă la **http://localhost:5173**.
 
-## Structură proiect
+### 5. Lansare în producție (opțional)
 
-```
-HandyConnect_Clean/
-├── client/                  # Frontend React (Vite)
-│   └── src/
-│       ├── components/      # Componente UI reutilizabile
-│       ├── pages/           # Pagini principale
-│       ├── hooks/           # Custom hooks
-│       └── utils/           # Utilități
-├── server/                  # Backend Express
-│   ├── routes/              # Route handlers
-│   ├── services/            # Servicii externe (Gemini AI)
-│   └── middleware/          # Middleware (upload, auth)
-└── supabase_*.sql           # Migrații bază de date
+```bash
+# Compilare client
+cd client && npm run build && cd ..
+
+# Pornire server (servește și bundle-ul static din client/dist)
+cd server && node index.js
 ```
 
 ---
 
-## Securitate
+## Structura repository-ului
 
-- Row Level Security (RLS) activat pe toate tabelele principale
-- Politici RLS separate pentru rolurile client, meșter și admin
-- Funcții PostgreSQL `SECURITY DEFINER` pentru operații privilegiate
-- Autentificare 2FA disponibilă prin Supabase Auth
-- Variabilele de mediu sensibile excluse din repository
-
----
-
-*Proiect licență — 2025*
+```
+HandyConnect/
+├── client/          # Aplicația React (Vite + Tailwind CSS)
+│   ├── src/
+│   │   ├── pages/   # Paginile aplicației (client, meșter, admin)
+│   │   ├── components/
+│   │   └── lib/     # Configurare Supabase client
+│   └── package.json
+├── server/          # API Express
+│   ├── routes/      # Endpoint-uri REST
+│   ├── services/    # Logică AI (Gemini), Supabase admin
+│   └── package.json
+└── package.json     # Script-uri rădăcină (dev, server, client)
+```
